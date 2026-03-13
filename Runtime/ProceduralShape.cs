@@ -67,6 +67,11 @@ namespace ProceduralShapes.Runtime
         private static readonly int _AntiAliasing = Shader.PropertyToID("_AntiAliasing");
         
         private static readonly int _MaskParams = Shader.PropertyToID("_MaskParams");
+        private static readonly int _MaskMatrixX = Shader.PropertyToID("_MaskMatrixX");
+        private static readonly int _MaskMatrixY = Shader.PropertyToID("_MaskMatrixY");
+        private static readonly int _MaskMatrixZ = Shader.PropertyToID("_MaskMatrixZ");
+        private static readonly int _MaskMatrixW = Shader.PropertyToID("_MaskMatrixW");
+        
         private static readonly int _MaskTrans = Shader.PropertyToID("_MaskTrans");
         private static readonly int _MaskSize = Shader.PropertyToID("_MaskSize");
         private static readonly int _MaskShape = Shader.PropertyToID("_MaskShape");
@@ -352,16 +357,20 @@ namespace ProceduralShapes.Runtime
                     return;
                 }
                 
-                // Mask Geometric Center
-                Vector3 maskPivotOffset = maskShape.GetGeometricCenterOffset();
-                Vector3 maskCenterLocal = (Vector3)maskShape.rectTransform.rect.center + maskPivotOffset;
-                Vector3 maskCenterWorld = maskShape.rectTransform.TransformPoint(maskCenterLocal);
+                Vector2 childGeomCenterLocal = rectTransform.rect.center + GetGeometricCenterOffset();
+                Matrix4x4 m1 = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0)); 
+                Matrix4x4 m2 = rectTransform.localToWorldMatrix; 
+                Matrix4x4 m3 = maskShape.rectTransform.worldToLocalMatrix; 
                 
-                Vector3 maskCenterInChildPivotFrame = rectTransform.InverseTransformPoint(maskCenterWorld);
-                Vector3 childPivotOffset = GetGeometricCenterOffset();
-                Vector3 childGeometricCenter = (Vector3)rectTransform.rect.center + childPivotOffset;
+                Vector2 maskGeomCenterLocal = maskShape.rectTransform.rect.center + maskShape.GetGeometricCenterOffset();
+                Matrix4x4 m4 = Matrix4x4.Translate(new Vector3(-maskGeomCenterLocal.x, -maskGeomCenterLocal.y, 0)); 
                 
-                Vector3 maskCenterInChildSDFFrame = maskCenterInChildPivotFrame - childGeometricCenter;
+                Matrix4x4 finalMatrix = m4 * m3 * m2 * m1;
+
+                m_InstanceMaterial.SetVector(_MaskMatrixX, finalMatrix.GetRow(0));
+                m_InstanceMaterial.SetVector(_MaskMatrixY, finalMatrix.GetRow(1));
+                m_InstanceMaterial.SetVector(_MaskMatrixZ, finalMatrix.GetRow(2));
+                m_InstanceMaterial.SetVector(_MaskMatrixW, finalMatrix.GetRow(3));
                 
                 Vector2 maskSize = maskShape.rectTransform.rect.size * maskShape.ShapeScale;
                 
@@ -370,10 +379,7 @@ namespace ProceduralShapes.Runtime
                 else if (maskShape.m_ShapeType == ShapeType.Polygon) maskShapeParams = new Vector4(maskShape.m_PolygonSides, maskShape.m_PolygonRounding, 0, 0);
                 else if (maskShape.m_ShapeType == ShapeType.Star) maskShapeParams = new Vector4(maskShape.m_StarPoints, maskShape.m_StarRatio, maskShape.m_StarRoundingOuter, maskShape.m_StarRoundingInner);
 
-                float relRot = maskShape.transform.eulerAngles.z - transform.eulerAngles.z;
-                
                 m_InstanceMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
-                m_InstanceMaterial.SetVector(_MaskTrans, new Vector4(maskCenterInChildSDFFrame.x, maskCenterInChildSDFFrame.y, relRot * Mathf.Deg2Rad, 0));
                 m_InstanceMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
                 m_InstanceMaterial.SetVector(_MaskShape, maskShapeParams);
                 
@@ -391,6 +397,10 @@ namespace ProceduralShapes.Runtime
                 RectTransform maskRT = maskShape.rectTransform;
                 Matrix4x4 maskWorldToLocal = maskRT.worldToLocalMatrix;
                 
+                // Note: CollectMaskBooleanOps still uses maskWorldToLocal and works in mask's local space.
+                // The boolean shapes are transformed relative to the mask using world coords, so this logic is still valid
+                // provided maskPivotOffset (GetGeometricCenterOffset) is what AddMaskShapeToShader expects.
+                Vector3 maskPivotOffset = maskShape.GetGeometricCenterOffset();
                 CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, maskWorldToLocal, maskPivotOffset);
                 
                 m_InstanceMaterial.SetInt(_MaskBoolParams, activeMaskCount);
