@@ -1,0 +1,13 @@
+{
+  "name": "com.firstsymbol.proceduralshapes",
+  "displayName": "Procedural Shapes",
+  "description": "",
+  "version": "0.0.1",
+  "documentationUrl": "https://github.com/FirstSymbol/Procedural-Shapes.git",
+  "dependencies": {
+  },
+  "author": {
+    "name": "FirstSymbol",
+    "url": "https://linkedin.com/in/firstsymbol"
+  }
+}
