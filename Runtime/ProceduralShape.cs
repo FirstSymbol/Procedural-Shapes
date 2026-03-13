@@ -48,6 +48,18 @@ namespace ProceduralShapes.Runtime
         private bool m_TextureDirty = true;
         private Material m_InstanceMaterial; 
         private ProceduralShapeMask m_CachedMask;
+        
+        // Caching Components
+        private RectTransform m_RectTransform;
+        public new RectTransform rectTransform => m_RectTransform ? m_RectTransform : (m_RectTransform = GetComponent<RectTransform>());
+
+        // --- Change Tracking State ---
+        private Matrix4x4 m_LastLocalToWorld = Matrix4x4.identity;
+        private Rect m_LastRect = Rect.zero;
+        // We use a simple hash approach or a list of tracked states to detect changes in dependencies
+        private struct TransformState { public Vector3 pos; public Quaternion rot; public Vector3 scale; public Rect rect; }
+        private Dictionary<int, TransformState> m_TrackedStates = new Dictionary<int, TransformState>();
+        private bool m_NeedUpdate = true;
 
         // --- Cache Shader Properties ---
         private static readonly int _BoolParams1 = Shader.PropertyToID("_BoolParams1");
@@ -109,18 +121,140 @@ namespace ProceduralShapes.Runtime
         }
 
         public bool IsActive => gameObject.activeInHierarchy && enabled;
-        public void SetAllDirty() { m_TextureDirty = true; SetVerticesDirty(); SetMaterialDirty(); }
+        public void SetAllDirty() { m_TextureDirty = true; m_NeedUpdate = true; SetVerticesDirty(); SetMaterialDirty(); }
 
-        protected override void OnEnable() { base.OnEnable(); SetAllDirty(); }
-        protected override void OnTransformParentChanged() { base.OnTransformParentChanged(); SetAllDirty(); }
+        protected override void OnEnable() 
+        { 
+            base.OnEnable(); 
+            m_RectTransform = GetComponent<RectTransform>();
+            SetAllDirty(); 
+        }
         
-        private void Update()
+        protected override void OnTransformParentChanged() 
+        { 
+            base.OnTransformParentChanged(); 
+            m_CachedMask = null; // Invalidate mask cache
+            SetAllDirty(); 
+        }
+        
+        protected override void OnRectTransformDimensionsChange()
         {
-            if (BooleanOperations.Count > 0 || (m_CachedMask != null && m_CachedMask.isActiveAndEnabled))
+            base.OnRectTransformDimensionsChange();
+            // UI layout changed
+            m_NeedUpdate = true;
+        }
+
+        private void LateUpdate()
+        {
+            // Use LateUpdate to catch changes made in Update
+            CheckForChanges();
+        }
+
+        private void CheckForChanges()
+        {
+            bool dirty = false;
+
+            // 1. Check Self
+            if (transform.hasChanged)
             {
-                SetMaterialDirty();
-                if (BooleanOperations.Count > 0) SetVerticesDirty(); 
+                // This resets the hasChanged flag, which might affect other scripts? 
+                // Unity's Transform.hasChanged is generally safe to use if we are the primary logic.
+                // But for UI, relying on Matrix check is safer if we want to avoid side effects.
+                Matrix4x4 currentL2W = transform.localToWorldMatrix;
+                if (currentL2W != m_LastLocalToWorld)
+                {
+                    m_LastLocalToWorld = currentL2W;
+                    dirty = true;
+                }
+                
+                // Also check rect size changes (sometimes handled by OnRectTransformDimensionsChange but safe to double check)
+                if (rectTransform.rect != m_LastRect)
+                {
+                    m_LastRect = rectTransform.rect;
+                    dirty = true;
+                }
+                
+                transform.hasChanged = false; // Reset to avoid false positives next frame
             }
+
+            // 2. Check Mask (if exists)
+            if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
+            {
+                // Try find mask
+                var mask = GetComponentInParent<ProceduralShapeMask>();
+                if (mask != m_CachedMask)
+                {
+                    m_CachedMask = mask;
+                    dirty = true;
+                }
+            }
+
+            if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled)
+            {
+                if (CheckTransformDirty(m_CachedMask.transform, m_CachedMask.Shape.rectTransform)) dirty = true;
+                
+                // Also check Mask's Booleans!
+                if (m_CachedMask.Shape != null)
+                {
+                    foreach (var op in m_CachedMask.Shape.BooleanOperations)
+                    {
+                        if (op.SourceShape != null && CheckTransformDirty(op.SourceShape.transform, op.SourceShape.rectTransform))
+                            dirty = true;
+                    }
+                }
+            }
+
+            // 3. Check Boolean Inputs
+            if (BooleanOperations.Count > 0)
+            {
+                foreach (var input in BooleanOperations)
+                {
+                    if (input.SourceShape != null && input.SourceShape.isActiveAndEnabled)
+                    {
+                        if (CheckTransformDirty(input.SourceShape.transform, input.SourceShape.rectTransform)) 
+                            dirty = true;
+                    }
+                }
+            }
+
+            if (dirty || m_NeedUpdate)
+            {
+                m_NeedUpdate = false;
+                SetMaterialDirty();
+                
+                // Only rebuild vertices if bounds might have changed (optimization: could be refined)
+                // But for now, updating geometry on move is required for correct culling and masking.
+                SetVerticesDirty(); 
+            }
+        }
+
+        private bool CheckTransformDirty(Transform t, RectTransform rt)
+        {
+            int id = t.GetInstanceID();
+            TransformState currentState = new TransformState
+            {
+                pos = t.position,
+                rot = t.rotation,
+                scale = t.lossyScale,
+                rect = rt != null ? rt.rect : Rect.zero
+            };
+
+            if (!m_TrackedStates.TryGetValue(id, out TransformState lastState))
+            {
+                m_TrackedStates[id] = currentState;
+                return true;
+            }
+
+            if (lastState.pos != currentState.pos || 
+                lastState.rot != currentState.rot || 
+                lastState.scale != currentState.scale ||
+                lastState.rect != currentState.rect)
+            {
+                m_TrackedStates[id] = currentState;
+                return true;
+            }
+
+            return false;
         }
 
         protected override void OnDestroy() 
@@ -132,6 +266,9 @@ namespace ProceduralShapes.Runtime
 
         private void RebuildGradientTexture()
         {
+            // Only rebuild if texture is actually dirty
+            if (!m_TextureDirty && m_GradientTexture != null) return;
+
             int layers = 1 + Effects.Count;
             int rowCount = layers * 3; 
             
@@ -191,9 +328,11 @@ namespace ProceduralShapes.Runtime
         private void UpdateBooleanProperties()
         {
             int activeCount = 0;
+            // Get Matrix only once
             Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
 
-            CollectBooleanOps(this, BooleanOperation.Union, ref activeCount, worldToLocal, true);
+            // Pass references to avoid struct copying
+            CollectBooleanOps(this, BooleanOperation.Union, ref activeCount, worldToLocal);
 
             m_InstanceMaterial.SetInt(_BoolParams1, activeCount); 
             if (activeCount > 0)
@@ -209,6 +348,8 @@ namespace ProceduralShapes.Runtime
         {
             if (m_InstanceMaterial == null) return;
 
+            // Mask lookup logic moved to CheckForChanges to avoid GetComponent in GetModifiedMaterial loop
+            // But we double check here if null (first run)
             if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
                 m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
 
@@ -222,7 +363,10 @@ namespace ProceduralShapes.Runtime
                     return;
                 }
                 
-                // --- MASK BASE SHAPE ---
+                // Calculate Centers and Matrices
+                // Optimization: Cache transforms locally to avoid property access overhead? 
+                // Unity optimizes transform access in newer versions, but Matrix mult is still CPU work.
+                
                 Vector3 maskCenterWorld = maskShape.rectTransform.TransformPoint(maskShape.rectTransform.rect.center);
                 Vector3 maskCenterInChildPivotFrame = rectTransform.InverseTransformPoint(maskCenterWorld);
                 Vector3 maskCenterInChildSDFFrame = maskCenterInChildPivotFrame - (Vector3)rectTransform.rect.center;
@@ -245,7 +389,7 @@ namespace ProceduralShapes.Runtime
                 m_InstanceMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
                 m_InstanceMaterial.SetVector(_MaskShape, maskShapeParams);
                 
-                // --- MASK FILL DATA ---
+                // Mask Fill
                 Texture gradientTex = maskShape.mainTexture;
                 m_InstanceMaterial.SetTexture(_MaskTex, gradientTex != null ? gradientTex : Texture2D.whiteTexture);
                 
@@ -256,7 +400,7 @@ namespace ProceduralShapes.Runtime
                 m_InstanceMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, vCoord));
                 m_InstanceMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, 0, 0));
                 
-                // --- MASK BOOLEAN OPS ---
+                // Mask Booleans
                 int activeMaskCount = 0;
                 RectTransform maskRT = maskShape.rectTransform;
                 Vector3 maskCenterOffset = (Vector3)maskRT.rect.center;
@@ -280,7 +424,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 rootWorldToLocal, bool isRoot)
+        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 rootWorldToLocal)
         {
             if (currentShape == null) return;
             
@@ -302,7 +446,8 @@ namespace ProceduralShapes.Runtime
                 AddShapeToShader(other, effectiveOp, count, rootWorldToLocal, input.Smoothness);
                 count++;
 
-                CollectBooleanOps(other, input.Operation, ref count, rootWorldToLocal, false);
+                // Removed isRoot param as logic is consistent
+                CollectBooleanOps(other, input.Operation, ref count, rootWorldToLocal);
             }
         }
 
@@ -426,8 +571,12 @@ namespace ProceduralShapes.Runtime
                 maxY = Mathf.Max(maxY, cy + hh);
             }
 
-            Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
-            ExpandBoundsRecursive(this, ref minX, ref maxX, ref minY, ref maxY, worldToLocal, true);
+            // Only recurse if we have operations (Optimization)
+            if (BooleanOperations.Count > 0)
+            {
+                Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
+                ExpandBoundsRecursive(this, ref minX, ref maxX, ref minY, ref maxY, worldToLocal);
+            }
 
             float maxExpand = 0f;
             float mainBlurRadius = 0f;
@@ -463,9 +612,13 @@ namespace ProceduralShapes.Runtime
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is StrokeEffect stroke && stroke.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 2, i + 1, stroke.Fill, Vector3.zero, new Vector4(stroke.Width, (float)stroke.Alignment, stroke.Fill.GradientOffset.x, stroke.Fill.GradientOffset.y));
+            
+            for (int i = 0; i < Effects.Count; i++)
+                if (Effects[i] is BlurEffect blur && blur.Enabled)
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 4, i + 1, blur.Fill, Vector3.zero, new Vector4(blur.Radius, 0, blur.Fill.GradientOffset.x, blur.Fill.GradientOffset.y));
         }
 
-        private void ExpandBoundsRecursive(ProceduralShape currentShape, ref float minX, ref float maxX, ref float minY, ref float maxY, Matrix4x4 rootWorldToLocal, bool isRoot)
+        private void ExpandBoundsRecursive(ProceduralShape currentShape, ref float minX, ref float maxX, ref float minY, ref float maxY, Matrix4x4 rootWorldToLocal)
         {
             if (currentShape == null) return;
             
@@ -488,7 +641,7 @@ namespace ProceduralShapes.Runtime
                     maxY = Mathf.Max(maxY, localPt.y);
                 }
 
-                ExpandBoundsRecursive(other, ref minX, ref maxX, ref minY, ref maxY, rootWorldToLocal, false);
+                ExpandBoundsRecursive(other, ref minX, ref maxX, ref minY, ref maxY, rootWorldToLocal);
             }
         }
 

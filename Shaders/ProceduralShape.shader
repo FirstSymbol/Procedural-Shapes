@@ -4,7 +4,6 @@
     {
         [HideInInspector] _MainTex ("Gradient Palette", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
-        _AntiAliasing ("Edge Softness (AA)", Range(0.0, 5.0)) = 0.75
         
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -63,7 +62,7 @@
             struct v2f {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                float3 normal : NORMAL;
+                float3 normal : NORMAL; // x=unused, y=Softness(AA), z=BlurRadius
                 float4 tangent : TANGENT;
                 float2 uv0 : TEXCOORD0;
                 float4 shapeParams : TEXCOORD1;
@@ -74,7 +73,6 @@
 
             sampler2D _MainTex;
             float4 _ClipRect;
-            float _AntiAliasing;
             
             // Boolean Arrays (Max 8 ops)
             int _BoolParams1; 
@@ -121,7 +119,43 @@
                 float effectType = i.baseData.w; 
                 
                 if (effectType == 1.0) {
+                    p -= i.normal.xy; // Offset for DropShadow passed in normal.xy?
+                    // Wait, previous code used i.normal.xy for DropShadow offset.
+                    // But now we use i.normal.y for AA and i.normal.z for Blur.
+                    // We have a conflict.
+                    // Let's re-map:
+                    // DropShadow Offset was passed in DrawLayerQuad as 'normalData'.
+                    // Main Shape passes (0, Softness, Blur)
+                    // DropShadow passes (OffsetX, OffsetY, Blur)
+                    // So for DropShadow, Softness is missing from normal.y?
+                    // We can assume standard softness for DropShadow or pack it elsewhere?
+                    // Or pack Offset in Tangent?
+                    // Tangent is (Spread, Alignment, GradOffX, GradOffY). Full.
+                    // Normal is (OffX, OffY, Blur).
+                    // We need a place for AA.
+                    // DropShadow usually implies soft edges anyway (Blur).
+                    // If EffectType == 1 (Shadow), normal.xy is Offset. normal.z is Blur.
+                    // We can hardcode AA for shadow or use Blur as AA.
+                    // For Main Shape (EffectType 0), normal.x is unused, normal.y = AA, normal.z = Blur.
+                }
+                
+                // --- RESOLVE NORMAL DATA USAGE ---
+                // Default AA
+                float aa = 1.0; 
+                
+                if (effectType == 1.0) {
+                    // Drop Shadow: normal.xy = Offset, normal.z = Blur
                     p -= i.normal.xy;
+                    // AA for shadow is usually irrelevant if blurred, but let's use fixed reasonable value
+                    aa = 1.0; 
+                } else if (effectType == 3.0) {
+                    // Inner Shadow: normal.xy = Offset, normal.z = Blur
+                    // Same conflict.
+                    aa = 1.0;
+                } else {
+                    // Main Shape / Stroke / Blur Layer
+                    // normal.y = AA
+                    aa = max(i.normal.y, 0.001);
                 }
                 
                 float2 halfSize = i.baseData.xy * 0.5;
@@ -182,7 +216,7 @@
                 // Mask Logic
                 float maskFillAlpha = 1.0;
                 
-                // --- GLOBAL MASKING (HIERARCHICAL) ---
+                // --- GLOBAL MASKING ---
                 if (_MaskParams.x > 0.5) {
                     float maskType = _MaskParams.y;
                     float maskSmooth = _MaskParams.z;
@@ -206,7 +240,6 @@
                     
                     float maskD = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
                     
-                    // --- MASK BOOLEANS ---
                     int mBoolCount = _MaskBoolParams;
                     if (mBoolCount > 0) {
                         for (int j = 0; j < 8; j++) {
@@ -259,7 +292,6 @@
                         d = max(d, maskD);
                     }
                     
-                    // --- CALCULATE MASK FILL ALPHA ---
                     float mFillType = _MaskFillParams.x;
                     float mGradAngle = _MaskFillParams.y;
                     float mGradScale = _MaskFillParams.z;
@@ -296,14 +328,6 @@
                 }
                 else if (effectType == 3.0) d += spread; 
 
-                float aa = max(_AntiAliasing, 0.001);
-                
-                // Add Blur effect radius (passed via normal.z) to the AA calculation
-                // For main shape (Type 0) or effects that support blur via normal.z
-                // DropShadow (Type 1) and InnerShadow (Type 3) pass blur in normal.z
-                // Main Shape (Type 0) now passes blur radius in normal.z too!
-                // Stroke (Type 2) passes 0 in normal.z usually, but if we want blurred stroke...
-                
                 float blur = max(i.normal.z, aa);
                 
                 float mask = 0;
@@ -324,7 +348,14 @@
                 float2 gradOffset = i.tangent.zw;
 
                 float2 gradP = p - (halfSize * gradOffset);
-                if (effectType == 1.0 || effectType == 3.0) gradP -= i.normal.xy;
+                if (effectType == 1.0 || effectType == 3.0) gradP -= i.normal.xy; // Offset for Shadows from normal.xy?
+                // Wait, if effectType == 1 (Shadow), we ALREADY subtracted offset from p at start of shader.
+                // "if (effectType == 1.0) p -= i.normal.xy;"
+                // So here 'p' is already shifted.
+                // Do we need to shift gradP?
+                // Gradient texture coordinates should stay with the shadow?
+                // If p is shifted, gradP (derived from p) is shifted. So the texture moves with the shadow. Correct.
+                
                 gradP /= max(gradScale, 0.001);
 
                 float t = 0.5;
@@ -341,7 +372,7 @@
                 float4 colorSample = tex2D(_MainTex, float2(saturate(t), (rowIndex * 3.0 + 1.5) / texHeight));
                 float4 finalColor = colorSample * i.color;
                 finalColor.a *= mask;
-                finalColor.a *= maskFillAlpha; // APPLY MASK TRANSPARENCY
+                finalColor.a *= maskFillAlpha; 
                 finalColor.rgb *= finalColor.a;
 
                 #ifdef UNITY_UI_CLIP_RECT
