@@ -4,6 +4,7 @@
     {
         [HideInInspector] _MainTex ("Gradient Palette", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
+        _AntiAliasing ("Edge Softness (AA)", Range(0.0, 5.0)) = 0.75
         
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -12,18 +13,20 @@
         _StencilReadMask ("Stencil Read Mask", Float) = 255
         _ColorMask ("Color Mask", Float) = 15
         
-        // Mask Properties
+        // Mask Matrix (Child Local -> Mask SDF Space)
+        _MaskMatrixX ("Mask Matrix X", Vector) = (1,0,0,0)
+        _MaskMatrixY ("Mask Matrix Y", Vector) = (0,1,0,0)
+        _MaskMatrixZ ("Mask Matrix Z", Vector) = (0,0,1,0)
+        _MaskMatrixW ("Mask Matrix W", Vector) = (0,0,0,1)
+
         _MaskParams ("Mask Params", Vector) = (0,0,0,0) 
-        _MaskTrans ("Mask Transform", Vector) = (0,0,0,0)
         _MaskSize ("Mask Size", Vector) = (0,0,0,0)
         _MaskShape ("Mask Shape Params", Vector) = (0,0,0,0)
         
-        // Mask Fill Data (For Transparency)
         _MaskTex ("Mask Gradient Tex", 2D) = "white" {}
         _MaskFillParams ("Mask Fill Params", Vector) = (0,0,0,0) 
         _MaskFillOffset ("Mask Fill Offset", Vector) = (0,0,0,0) 
         
-        // Mask Boolean Ops
         _MaskBoolParams ("Mask Bool Count", Int) = 0
     }
 
@@ -74,16 +77,19 @@
             sampler2D _MainTex;
             float4 _ClipRect;
             
-            // Boolean Arrays (Max 8 ops)
             int _BoolParams1; 
             float4 _BoolData_OpType[8];     
             float4 _BoolData_ShapeParams[8];
             float4 _BoolData_Transform[8];  
             float4 _BoolData_Size[8];       
 
-            // Global Mask Uniforms
+            // Mask Matrix
+            float4 _MaskMatrixX;
+            float4 _MaskMatrixY;
+            float4 _MaskMatrixZ;
+            float4 _MaskMatrixW;
+
             float4 _MaskParams; 
-            float4 _MaskTrans;  
             float4 _MaskSize;   
             float4 _MaskShape;  
             
@@ -91,7 +97,6 @@
             float4 _MaskFillParams;
             float4 _MaskFillOffset;
             
-            // Mask Boolean Ops
             int _MaskBoolParams;
             float4 _MaskBoolOpType[8];     
             float4 _MaskBoolShapeParams[8];
@@ -118,30 +123,23 @@
                 float cornerSmoothing = frac(i.baseData.z) / 0.99;
                 float effectType = i.baseData.w; 
                 
-                // --- UNPACKING ---
                 float aa = 1.0;
                 float blur = 0.0;
                 float baseRotation = 0.0;
                 
-                if (effectType == 1.0 || effectType == 3.0) { // Shadow
-                    // Normal: x=OffX, y=OffY, z=Blur
-                    // Tangent: y=Rotation
+                if (effectType == 1.0 || effectType == 3.0) { 
                     p -= i.normal.xy; 
                     blur = i.normal.z;
                     baseRotation = i.tangent.y;
-                    aa = 1.0; // Fixed AA for shadows
+                    aa = 1.0; 
                 } else {
-                    // Main / Stroke / Blur
-                    // Normal: x=Rotation, y=AA, z=Blur
                     baseRotation = i.normal.x;
                     aa = max(i.normal.y, 0.001);
                     blur = i.normal.z;
                 }
                 
-                // Add base AA to blur
                 blur = max(blur, aa);
                 
-                // Apply Rotation to P ONLY for Base Shape Calculation
                 float2 p_rotated = p;
                 if (abs(baseRotation) > 0.0001) {
                     float s = sin(-baseRotation);
@@ -151,10 +149,8 @@
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
-                // 1. Base Shape SDF (using Rotated P)
                 float d = GetBasicSDF(p_rotated, halfSize, shapeType, cornerSmoothing, i.shapeParams);
 
-                // --- BOOLEAN OPERATIONS (using Original P) ---
                 int boolCount = _BoolParams1;
                 if (boolCount > 0) {
                     for (int k = 0; k < 8; k++) {
@@ -169,22 +165,12 @@
                         float2 boolSize = _BoolData_Size[k].xy;
                         float4 boolShapeParams = _BoolData_ShapeParams[k];
 
-                        // Transform P (Original) to Cutter Space
                         float2 p2 = p - boolTrans.xy;
                         float rot = boolTrans.z;
                         if (abs(rot) > 0.0001) {
                             float s = sin(-rot);
                             float c = cos(-rot);
                             p2 = float2(p2.x * c - p2.y * s, p2.x * s + p2.y * c);
-                        }
-
-                        if (boolType > 1.5) { 
-                            float innerRot = boolTrans.w;
-                            if (abs(innerRot) > 0.0001) {
-                                float s2 = sin(-innerRot);
-                                float c2 = cos(-innerRot);
-                                p2 = float2(p2.x * c2 - p2.y * s2, p2.x * s2 + p2.y * c2);
-                            }
                         }
 
                         float d2 = GetBasicSDF(p2, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
@@ -205,7 +191,6 @@
                     }
                 }
                 
-                // Mask Logic
                 float maskFillAlpha = 1.0;
                 
                 // --- GLOBAL MASKING ---
@@ -214,21 +199,17 @@
                     float maskSmooth = _MaskParams.z;
                     float maskFeather = _MaskParams.w;
                     
-                    float2 maskP = p - _MaskTrans.xy; // Original P
-                    float maskRot = _MaskTrans.z;
-                    if (abs(maskRot) > 0.0001) {
-                         float s = sin(-maskRot);
-                         float c = cos(-maskRot);
-                         maskP = float2(maskP.x * c - maskP.y * s, maskP.x * s + maskP.y * c);
-                    }
-                    if (maskType > 1.5) {
-                         float innerR = _MaskTrans.w;
-                         if (abs(innerR) > 0.0001) {
-                             float s2 = sin(-innerR);
-                             float c2 = cos(-innerR);
-                             maskP = float2(maskP.x * c2 - maskP.y * s2, maskP.x * s2 + maskP.y * c2);
-                         }
-                    }
+                    // Transform P (Child Local) to Mask SDF Space using Matrix
+                    // We need to use 'p' (original unrotated child local coords)
+                    // The matrix _MaskMatrix handles the full transform chain.
+                    float4x4 childToMask = float4x4(
+                        _MaskMatrixX,
+                        _MaskMatrixY,
+                        _MaskMatrixZ,
+                        _MaskMatrixW
+                    );
+                    
+                    float2 maskP = mul(childToMask, float4(p, 0, 1)).xy;
                     
                     float maskD = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
                     
@@ -252,15 +233,6 @@
                                 float s = sin(-rot3);
                                 float c = cos(-rot3);
                                 p3 = float2(p3.x * c - p3.y * s, p3.x * s + p3.y * c);
-                            }
-                            
-                            if (bType > 1.5) { 
-                                float iRot = bTrans.w;
-                                if (abs(iRot) > 0.0001) {
-                                    float s2 = sin(-iRot);
-                                    float c2 = cos(-iRot);
-                                    p3 = float2(p3.x * c2 - p3.y * s2, p3.x * s2 + p3.y * c2);
-                                }
                             }
 
                             float d3 = GetBasicSDF(p3, bSize * 0.5, bType, bSmooth, bParams);
@@ -337,15 +309,6 @@
                 float gradScale = i.fillParams.w;
                 float2 gradOffset = i.tangent.zw;
 
-                // Gradient calculation uses rotated P as well?
-                // Usually gradient rotates with the shape.
-                // So use p_rotated.
-                // But shadows? Shadows use 'p' (offsetted). 
-                // Shadows should also rotate.
-                // But we used 'p' (offsetted) for 'p_rotated'.
-                // If effectType==1, p was shifted. then rotated. 
-                // So gradP should use p_rotated.
-                
                 float2 gradP = p_rotated - (halfSize * gradOffset);
                 gradP /= max(gradScale, 0.001);
 

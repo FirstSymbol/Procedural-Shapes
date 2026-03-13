@@ -19,6 +19,7 @@
         _MaskWorldToLocalW ("Mask Matrix W", Vector) = (0,0,0,1)
 
         _MaskParams ("Mask Params", Vector) = (0,0,0,0) 
+        _MaskTrans ("Mask Transform", Vector) = (0,0,0,0)
         _MaskSize ("Mask Size", Vector) = (0,0,0,0)
         _MaskShape ("Mask Shape Params", Vector) = (0,0,0,0)
         
@@ -73,6 +74,7 @@
             float4 _MaskWorldToLocalW;
 
             float4 _MaskParams; 
+            float4 _MaskTrans;  
             float4 _MaskSize;   
             float4 _MaskShape;
             
@@ -88,10 +90,7 @@
 
             v2f vert (appdata_ui v) {
                 v2f o;
-                // FIX: unity_ObjectToWorld transforms local vertex to world pos.
                 o.worldPosition = mul(unity_ObjectToWorld, v.vertex); 
-                // FIX: UnityObjectToClipPos expects LOCAL vertex position, NOT world position.
-                // It internally does ModelViewProjection * v.
                 o.vertex = UnityObjectToClipPos(v.vertex);
                 o.color = v.color * _Color;
                 o.texcoord = v.texcoord;
@@ -116,7 +115,25 @@
                     float maskSmooth = _MaskParams.z;
                     float maskFeather = _MaskParams.w;
                     
-                    float d = GetBasicSDF(p, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
+                    // Base Mask SDF
+                    float2 maskP = p;
+                    float maskRot = _MaskTrans.z; 
+                    if (abs(maskRot) > 0.0001) {
+                         float s = sin(-maskRot);
+                         float c = cos(-maskRot);
+                         maskP = float2(maskP.x * c - maskP.y * s, maskP.x * s + maskP.y * c);
+                    }
+                    
+                    if (maskType > 1.5) {
+                         float innerR = _MaskTrans.w;
+                         if (abs(innerR) > 0.0001) {
+                             float s2 = sin(-innerR);
+                             float c2 = cos(-innerR);
+                             maskP = float2(maskP.x * c2 - maskP.y * s2, maskP.x * s2 + maskP.y * c2);
+                         }
+                    }
+                    
+                    float d = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
                     
                     int boolCount = _MaskBoolParams;
                     if (boolCount > 0) {
@@ -172,7 +189,8 @@
                     float gradScale = _MaskFillParams.z;
                     float2 gradOffset = _MaskFillOffset.xy; 
 
-                    float2 gradP = p - (halfSize * gradOffset);
+                    // FIX: Use rotated coordinates for gradient calculation
+                    float2 gradP = maskP - (halfSize * gradOffset);
                     gradP /= max(gradScale, 0.001);
 
                     float t = 0.5;

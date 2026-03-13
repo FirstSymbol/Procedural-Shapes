@@ -26,13 +26,11 @@ namespace ProceduralShapes.Runtime
         
         [Range(3, 128)] public int m_PolygonSides = 5;
         [Range(0f, 1f)] public float m_PolygonRounding = 0f;
-        public float m_PolygonRotation = 0f;
 
         [Range(3, 128)] public int m_StarPoints = 5;
         [Range(0.01f, 1f)] public float m_StarRatio = 0.5f;
         [Range(0f, 1f)] public float m_StarRoundingOuter = 0f;
         [Range(0f, 1f)] public float m_StarRoundingInner = 0f;
-        public float m_StarRotation = 0f;
 
         [Range(0f, 10f)] 
         [Tooltip("Сглаживание краев (антиалиасинг). Значение около 1.0 обычно оптимально.")]
@@ -66,6 +64,7 @@ namespace ProceduralShapes.Runtime
         private static readonly int _BoolData_ShapeParams = Shader.PropertyToID("_BoolData_ShapeParams");
         private static readonly int _BoolData_Transform = Shader.PropertyToID("_BoolData_Transform");
         private static readonly int _BoolData_Size = Shader.PropertyToID("_BoolData_Size");
+        private static readonly int _AntiAliasing = Shader.PropertyToID("_AntiAliasing");
         
         private static readonly int _MaskParams = Shader.PropertyToID("_MaskParams");
         private static readonly int _MaskTrans = Shader.PropertyToID("_MaskTrans");
@@ -353,6 +352,7 @@ namespace ProceduralShapes.Runtime
                     return;
                 }
                 
+                // Mask Geometric Center
                 Vector3 maskPivotOffset = maskShape.GetGeometricCenterOffset();
                 Vector3 maskCenterLocal = (Vector3)maskShape.rectTransform.rect.center + maskPivotOffset;
                 Vector3 maskCenterWorld = maskShape.rectTransform.TransformPoint(maskCenterLocal);
@@ -363,7 +363,6 @@ namespace ProceduralShapes.Runtime
                 
                 Vector3 maskCenterInChildSDFFrame = maskCenterInChildPivotFrame - childGeometricCenter;
                 
-                float maskWorldRot = maskShape.transform.eulerAngles.z;
                 Vector2 maskSize = maskShape.rectTransform.rect.size * maskShape.ShapeScale;
                 
                 Vector4 maskShapeParams = Vector4.zero;
@@ -371,13 +370,10 @@ namespace ProceduralShapes.Runtime
                 else if (maskShape.m_ShapeType == ShapeType.Polygon) maskShapeParams = new Vector4(maskShape.m_PolygonSides, maskShape.m_PolygonRounding, 0, 0);
                 else if (maskShape.m_ShapeType == ShapeType.Star) maskShapeParams = new Vector4(maskShape.m_StarPoints, maskShape.m_StarRatio, maskShape.m_StarRoundingOuter, maskShape.m_StarRoundingInner);
 
-                float relRot = maskWorldRot - transform.eulerAngles.z;
-                float innerRot = 0;
-                if (maskShape.m_ShapeType == ShapeType.Polygon) innerRot = maskShape.m_PolygonRotation * Mathf.Deg2Rad;
-                else if (maskShape.m_ShapeType == ShapeType.Star) innerRot = maskShape.m_StarRotation * Mathf.Deg2Rad;
+                float relRot = maskShape.transform.eulerAngles.z - transform.eulerAngles.z;
                 
                 m_InstanceMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
-                m_InstanceMaterial.SetVector(_MaskTrans, new Vector4(maskCenterInChildSDFFrame.x, maskCenterInChildSDFFrame.y, relRot * Mathf.Deg2Rad, innerRot));
+                m_InstanceMaterial.SetVector(_MaskTrans, new Vector4(maskCenterInChildSDFFrame.x, maskCenterInChildSDFFrame.y, relRot * Mathf.Deg2Rad, 0));
                 m_InstanceMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
                 m_InstanceMaterial.SetVector(_MaskShape, maskShapeParams);
                 
@@ -453,7 +449,7 @@ namespace ProceduralShapes.Runtime
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             
             if (shape.m_ShapeType == ShapeType.Rectangle) m_ShaderShapeParams[index] = shape.m_CornerRadius;
-            else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, shape.m_PolygonRotation * Mathf.Deg2Rad, 0);
+            else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, 0, 0);
             else if (shape.m_ShapeType == ShapeType.Star) m_ShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
 
             m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, relativeRotation * Mathf.Deg2Rad, 0);
@@ -465,11 +461,6 @@ namespace ProceduralShapes.Runtime
             float finalH = otherRect.rect.height * lossyScaleRatio.y * otherScale;
 
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
-
-            if (shape.m_ShapeType == ShapeType.Star)
-                m_ShaderTransform[index].w = shape.m_StarRotation * Mathf.Deg2Rad;
-            else if (shape.m_ShapeType == ShapeType.Polygon)
-                m_ShaderTransform[index].w = shape.m_PolygonRotation * Mathf.Deg2Rad;
         }
         
         private void CollectMaskBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 maskWorldToLocal, Vector3 maskCenterOffset)
@@ -512,7 +503,7 @@ namespace ProceduralShapes.Runtime
             m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             
             if (shape.m_ShapeType == ShapeType.Rectangle) m_MaskShaderShapeParams[index] = shape.m_CornerRadius;
-            else if (shape.m_ShapeType == ShapeType.Polygon) m_MaskShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, shape.m_PolygonRotation * Mathf.Deg2Rad, 0);
+            else if (shape.m_ShapeType == ShapeType.Polygon) m_MaskShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, 0, 0);
             else if (shape.m_ShapeType == ShapeType.Star) m_MaskShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
 
             m_MaskShaderTransform[index] = new Vector4(localPos.x, localPos.y, relativeRotation * Mathf.Deg2Rad, 0);
@@ -526,11 +517,6 @@ namespace ProceduralShapes.Runtime
             float finalH = otherRect.rect.height * lossyScaleRatio.y * shape.ShapeScale;
 
             m_MaskShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
-
-            if (shape.m_ShapeType == ShapeType.Star)
-                m_MaskShaderTransform[index].w = shape.m_StarRotation * Mathf.Deg2Rad;
-            else if (shape.m_ShapeType == ShapeType.Polygon)
-                m_MaskShaderTransform[index].w = shape.m_PolygonRotation * Mathf.Deg2Rad;
         }
 
         protected override void OnPopulateMesh(VertexHelper vh)
@@ -659,27 +645,16 @@ namespace ProceduralShapes.Runtime
             vert.color = color; 
             
             float baseRotation = 0f;
-            if (m_ShapeType == ShapeType.Polygon) baseRotation = m_PolygonRotation * Mathf.Deg2Rad;
-            else if (m_ShapeType == ShapeType.Star) baseRotation = m_StarRotation * Mathf.Deg2Rad;
-            
-            // --- PACKING STRATEGY ---
-            // Effect Type 1 (DropShadow): normal = (OffX, OffY, Blur), tangent = (Spread, Align, GradX, GradY) -> TANGENT.Y free for ROT
-            // Effect Type 3 (InnerShadow): same as DropShadow
-            // Effect Type 0/2/4 (Main, Stroke, Blur): normal = (Rot, AA, Blur)
             
             if (effectType == 1 || effectType == 3) 
             {
                 vert.normal = new Vector3(normalData.x, normalData.y, normalData.z);
-                // Pack Rotation in Tangent.y (Alignment unused for Shadow)
-                // Tangent: x=Spread, y=Rot, z=GradX, w=GradY
                 vert.tangent = new Vector4(tangentData.x, baseRotation, tangentData.z, tangentData.w);
             }
             else
             {
-                // Main / Stroke / Blur
-                // normal.x = Rotation, normal.y = AA, normal.z = Blur
                 vert.normal = new Vector3(baseRotation, normalData.y, normalData.z);
-                vert.tangent = tangentData; // Align uses tangent.y in Stroke, so it fits.
+                vert.tangent = tangentData; 
             }
             
             vert.uv1 = uv1_shapeParams;

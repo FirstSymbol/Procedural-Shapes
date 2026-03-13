@@ -19,6 +19,7 @@ namespace ProceduralShapes.Runtime
         private static readonly int _MaskWorldToLocalW = Shader.PropertyToID("_MaskWorldToLocalW");
 
         private static readonly int _MaskParams = Shader.PropertyToID("_MaskParams");
+        private static readonly int _MaskTrans = Shader.PropertyToID("_MaskTrans");
         private static readonly int _MaskSize = Shader.PropertyToID("_MaskSize");
         private static readonly int _MaskShape = Shader.PropertyToID("_MaskShape");
         private static readonly int _MaskTex = Shader.PropertyToID("_MaskTex");
@@ -87,30 +88,14 @@ namespace ProceduralShapes.Runtime
             // 1. Matrix: World -> Mask Local (Pivot) -> Mask SDF (Center)
             Matrix4x4 worldToLocal = maskRT.worldToLocalMatrix;
             
-            // Correction for Pivot: SDF expects (0,0) at geometric center.
-            // Local point (0,0) is at Pivot.
-            // If Pivot is (0,0), Center is at (Width/2, Height/2).
-            // We need to translate Local Point by (0.5 - Pivot) * Size.
-            // No, wait. 
-            // If Pivot is (0.5, 0.5), Local (0,0) IS Center. Correction is 0.
-            // If Pivot is (0,0) [Bottom Left], Local (0,0) is BL. Center is at (W/2, H/2).
-            // To get coords relative to Center, we need p_center = p_local - (Center - Pivot).
-            // Center in Local is ( (0.5-px)*W, (0.5-py)*H ).
-            // So we subtract that offset.
-            
             Vector2 size = maskRT.rect.size;
             Vector2 pivot = maskRT.pivot;
-            Vector3 centerOffset = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f);
+            Vector2 pivotOffset = maskShape.GetGeometricCenterOffset();
             
-            // Create translation matrix
-            Matrix4x4 centerCorrection = Matrix4x4.Translate(-centerOffset); 
-            // Apply: World -> Local -> Correct to Center
-            // But wait, the Translation should be applied AFTER converting to local.
-            // p_local = WorldToLocal * p_world
-            // p_sdf = p_local - offset
-            // p_sdf = Translate(-offset) * p_local
-            // Matrix = Translate(-offset) * WorldToLocal
+            Vector3 rectCenterFromPivot = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f);
+            Vector3 totalCenterCorrection = rectCenterFromPivot + (Vector3)pivotOffset;
             
+            Matrix4x4 centerCorrection = Matrix4x4.Translate(-totalCenterCorrection); 
             Matrix4x4 finalMatrix = centerCorrection * worldToLocal;
 
             m_MaskMaterial.SetVector(_MaskWorldToLocalX, finalMatrix.GetRow(0));
@@ -130,6 +115,9 @@ namespace ProceduralShapes.Runtime
             m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
             m_MaskMaterial.SetVector(_MaskShape, maskShapeParams);
             
+            // FIX: Removed usage of ShapeRotation. Passing 0.
+            m_MaskMaterial.SetVector(_MaskTrans, new Vector4(0, 0, 0, 0));
+            
             // 3. Fill Data
             Texture gradientTex = maskShape.mainTexture; 
             m_MaskMaterial.SetTexture(_MaskTex, gradientTex != null ? gradientTex : Texture2D.whiteTexture);
@@ -143,24 +131,7 @@ namespace ProceduralShapes.Runtime
 
             // 4. Boolean Operations
             int activeCount = 0;
-            Matrix4x4 maskLocalIdentity = Matrix4x4.identity; // Booleans are already in mask local space (mostly)
-            // Wait, in ProceduralShape.cs logic, we compute position relative to "Root".
-            // Here "Root" is the Mask Shape.
-            // BUT ProceduralShape uses "worldToLocal" of the Root to transform World positions of booleans.
-            // We need to do exactly the same.
-            // We need Mask's WorldToLocal (adjusted for pivot? No).
-            // ProceduralShape.cs uses raw rectTransform.worldToLocalMatrix.
-            // And then draws UVs relative to rect.center.
-            // So if we transform a boolean object to local space, its (0,0) is relative to Pivot.
-            // The SDF calculation in shader expects (0,0) relative to Center.
-            // So we DO need to adjust boolean positions by the same center offset!
-            
-            // Let's pass the CORRECTION MATRIX to the collector.
-            // Actually simpler: 
-            // 1. Get Boolean Local Pos (relative to Pivot).
-            // 2. Subtract CenterOffset.
-            
-            CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, maskRT.worldToLocalMatrix, centerOffset);
+            CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, finalMatrix);
             
             m_MaskMaterial.SetInt(_MaskBoolParams, activeCount);
             if (activeCount > 0)
@@ -172,7 +143,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 rootWorldToLocal, Vector3 rootCenterOffset)
+        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 maskSDFMatrix)
         {
             if (currentShape == null) return;
             
@@ -191,39 +162,38 @@ namespace ProceduralShapes.Runtime
                     else if (input.Operation == BooleanOperation.Subtraction) effectiveOp = BooleanOperation.Union;
                 }
 
-                AddShapeToArrays(other, effectiveOp, count, rootWorldToLocal, rootCenterOffset, input.Smoothness);
+                AddShapeToArrays(other, effectiveOp, count, maskSDFMatrix, input.Smoothness);
                 count++;
 
-                CollectBooleanOps(other, input.Operation, ref count, rootWorldToLocal, rootCenterOffset); 
+                CollectBooleanOps(other, input.Operation, ref count, maskSDFMatrix);
             }
         }
 
-        private void AddShapeToArrays(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 maskWorldToLocal, Vector3 maskCenterOffset, float smoothness)
+        private void AddShapeToArrays(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 maskSDFMatrix, float smoothness)
         {
             RectTransform otherRect = shape.rectTransform;
-            Vector3 otherWorldPos = otherRect.position; 
             
-            // 1. To Mask Local (Pivot-based)
-            Vector3 localPos = maskWorldToLocal.MultiplyPoint3x4(otherWorldPos);
+            Vector2 size = otherRect.rect.size;
+            Vector2 pivot = otherRect.pivot;
+            Vector2 pivotOffset = shape.GetGeometricCenterOffset();
             
-            // 2. To Mask SDF (Center-based)
-            // We need to shift the boolean shape so its position is relative to Mask Center.
-            // If Pivot is (0,0), Center is at (W/2, H/2). 
-            // LocalPos (0,0) is far from center. 
-            // CenterOffset was (Center - Pivot).
-            // SDF Space 0 is at Center.
-            // So NewPos = LocalPos - CenterOffset.
-            localPos -= maskCenterOffset;
+            Vector3 localGeomCenter = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f) + (Vector3)pivotOffset;
+            Vector3 worldGeomCenter = otherRect.TransformPoint(localGeomCenter);
             
+            Vector3 posInMaskSDF = maskSDFMatrix.MultiplyPoint3x4(worldGeomCenter);
+            
+            // Unified Rotation: Relative to Mask Transform only
             float relativeRotation = otherRect.eulerAngles.z - m_CachedMask.Shape.transform.eulerAngles.z;
+            // FIX: Removed shape.ShapeRotation
+            float totalRot = relativeRotation * Mathf.Deg2Rad;
 
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             
             if (shape.m_ShapeType == ShapeType.Rectangle) m_ShaderShapeParams[index] = shape.m_CornerRadius;
-            else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, shape.m_PolygonRotation * Mathf.Deg2Rad, 0);
+            else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, 0, 0);
             else if (shape.m_ShapeType == ShapeType.Star) m_ShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
 
-            m_ShaderTransform[index] = new Vector4(localPos.x, localPos.y, relativeRotation * Mathf.Deg2Rad, 0);
+            m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, totalRot, 0);
             
             Vector3 lossyScaleRatio = new Vector3(
                 otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x, 
@@ -234,11 +204,6 @@ namespace ProceduralShapes.Runtime
             float finalH = otherRect.rect.height * lossyScaleRatio.y * shape.ShapeScale;
 
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
-
-            if (shape.m_ShapeType == ShapeType.Star)
-                m_ShaderTransform[index].w = shape.m_StarRotation * Mathf.Deg2Rad;
-            else if (shape.m_ShapeType == ShapeType.Polygon)
-                m_ShaderTransform[index].w = shape.m_PolygonRotation * Mathf.Deg2Rad;
         }
     }
 }
