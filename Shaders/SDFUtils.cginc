@@ -1,8 +1,6 @@
 ﻿#ifndef SDF_UTILS_INCLUDED
 #define SDF_UTILS_INCLUDED
 
-// --- SDF FUNCTIONS ---
-
 float smin(float a, float b, float k) {
     float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
     return lerp(b, a, h) - k * h * (1.0 - h);
@@ -51,11 +49,28 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
         return length(p_sec - closest) * sign(p_sec.y - closest.y) - rounding;
     }
     else if (shapeType < 3.5) {
-        // Star
+        // Star (Corrected)
         float n = max(3.0, params.x);
         float ratio = params.y;
-        float roundOuter = params.z * min(halfSize.x, halfSize.y) * 0.5;
-        float roundInner = params.w * min(halfSize.x, halfSize.y) * 0.5;
+        float maxR = min(halfSize.x, halfSize.y);
+        
+        // Target visual radii
+        float visualOuterR = maxR;
+        float visualInnerR = maxR * ratio;
+        
+        // Rounding parameters
+        float roundOuter = params.z * maxR * 0.5;
+        float roundInner = params.w * maxR * 0.5;
+        
+        // Skeleton radii (compensate for offset)
+        // Ensure skeleton doesn't invert
+        float skelOuterR = visualOuterR - roundOuter;
+        float skelInnerR = visualInnerR - roundOuter; // Both effectively expand by roundOuter
+        
+        // If skelInnerR becomes too small (or negative), we have artifacts.
+        // We must clamp rounding if geometry is too tight.
+        // But for visual consistency, let's just clamp the skeleton radius.
+        // skelInnerR = max(skelInnerR, 0.001); // Prevent negative
         
         float an = 3.14159265 / n;
         float a = atan2(p.x, p.y);
@@ -66,42 +81,36 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
         float2 p_sec1 = length(p) * float2(abs(sin(f1)), cos(f1));
         float2 p_sec2 = length(p) * float2(abs(sin(f2)), cos(f2));
         
-        float maxR = min(halfSize.x, halfSize.y);
-        float rOuter = maxR - roundOuter;
-        float rInner = maxR * ratio;
-        
-        float2 v1 = float2(0.0, rOuter);
-        float2 v2 = float2(rInner * sin(an), rInner * cos(an));
+        // Vertices of the skeleton sector
+        float2 v1 = float2(0.0, skelOuterR);
+        float2 v2 = float2(skelInnerR * sin(an), skelInnerR * cos(an));
         float2 ba = v2 - v1;
         
+        // Distance to segment v1-v2 (one side)
         float2 pa1 = p_sec1 - v1;
         float h1 = clamp(dot(pa1, ba) / dot(ba, ba), 0.0, 1.0);
         float d1 = length(pa1 - ba * h1) * sign(pa1.y * ba.x - pa1.x * ba.y);
         
+        // Distance to segment v1-v2 (other side)
         float2 pa2 = p_sec2 - v1;
         float h2 = clamp(dot(pa2, ba) / dot(ba, ba), 0.0, 1.0);
         float d2 = length(pa2 - ba * h2) * sign(pa2.y * ba.x - pa2.x * ba.y);
         
+        // Smooth min for inner corners
         float k = roundInner * 2.0 + 0.001;
-        float h_smin = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
-        float d = lerp(d2, d1, h_smin) - k * h_smin * (1.0 - h_smin);
+        // smin(d1, d2)
+        float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
+        float d = lerp(d2, d1, h) - k * h * (1.0 - h);
+        
         return d - roundOuter;
     }
     
     return 100000.0; // None
 }
 
-// Calculates SDF for a shape with boolean operations (passed as arrays)
-// Arrays must be defined in the main shader
 float CalculateCompoundSDF(float2 p, int count, float4 opTypes[8], float4 transforms[8], float4 sizes[8], float4 shapeParams[8]) 
 {
-    float d = 100000.0; // Init
-    
-    // First element is usually the base, but we treat all as a list
-    // Wait, the logic in original shader was: Base Shape d calculated first, then Loop over booleans.
-    // Here we want a generic calculator.
-    // Let's assume the caller calculates Base D, and this function applies the boolean list.
-    return d;
+    return 100000.0;
 }
 
 #endif

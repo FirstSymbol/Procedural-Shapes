@@ -17,6 +17,9 @@ namespace ProceduralShapes.Runtime
         
         [Tooltip("Uniform scale factor for the shape inside the RectTransform bounds.")]
         [SerializeField] private float m_ShapeScale = 1.0f;
+        
+        [Tooltip("Pivot of the shape geometry relative to the RectTransform center. (0.5, 0.5) is centered.")]
+        [SerializeField] private Vector2 m_ShapePivot = new Vector2(0.5f, 0.5f);
 
         public Vector4 m_CornerRadius = Vector4.zero;
         [Range(0f, 1f)] public float m_CornerSmoothing = 0f;
@@ -49,25 +52,20 @@ namespace ProceduralShapes.Runtime
         private Material m_InstanceMaterial; 
         private ProceduralShapeMask m_CachedMask;
         
-        // Caching Components
         private RectTransform m_RectTransform;
         public new RectTransform rectTransform => m_RectTransform ? m_RectTransform : (m_RectTransform = GetComponent<RectTransform>());
 
-        // --- Change Tracking State ---
         private Matrix4x4 m_LastLocalToWorld = Matrix4x4.identity;
         private Rect m_LastRect = Rect.zero;
-        // We use a simple hash approach or a list of tracked states to detect changes in dependencies
         private struct TransformState { public Vector3 pos; public Quaternion rot; public Vector3 scale; public Rect rect; }
         private Dictionary<int, TransformState> m_TrackedStates = new Dictionary<int, TransformState>();
         private bool m_NeedUpdate = true;
 
-        // --- Cache Shader Properties ---
         private static readonly int _BoolParams1 = Shader.PropertyToID("_BoolParams1");
         private static readonly int _BoolData_OpType = Shader.PropertyToID("_BoolData_OpType");
         private static readonly int _BoolData_ShapeParams = Shader.PropertyToID("_BoolData_ShapeParams");
         private static readonly int _BoolData_Transform = Shader.PropertyToID("_BoolData_Transform");
         private static readonly int _BoolData_Size = Shader.PropertyToID("_BoolData_Size");
-        private static readonly int _AntiAliasing = Shader.PropertyToID("_AntiAliasing");
         
         private static readonly int _MaskParams = Shader.PropertyToID("_MaskParams");
         private static readonly int _MaskTrans = Shader.PropertyToID("_MaskTrans");
@@ -109,6 +107,18 @@ namespace ProceduralShapes.Runtime
             get => m_ShapeScale;
             set { if (Mathf.Abs(m_ShapeScale - value) > 0.0001f) { m_ShapeScale = value; SetAllDirty(); } }
         }
+        
+        public Vector2 ShapePivot
+        {
+            get => m_ShapePivot;
+            set { if (m_ShapePivot != value) { m_ShapePivot = value; SetAllDirty(); } }
+        }
+
+        public Vector2 GetGeometricCenterOffset()
+        {
+            Rect r = rectTransform.rect;
+            return new Vector2((0.5f - m_ShapePivot.x) * r.width, (0.5f - m_ShapePivot.y) * r.height);
+        }
 
         private static Material m_DefaultMaterial;
         public override Material defaultMaterial
@@ -133,20 +143,18 @@ namespace ProceduralShapes.Runtime
         protected override void OnTransformParentChanged() 
         { 
             base.OnTransformParentChanged(); 
-            m_CachedMask = null; // Invalidate mask cache
+            m_CachedMask = null; 
             SetAllDirty(); 
         }
         
         protected override void OnRectTransformDimensionsChange()
         {
             base.OnRectTransformDimensionsChange();
-            // UI layout changed
             m_NeedUpdate = true;
         }
 
         private void LateUpdate()
         {
-            // Use LateUpdate to catch changes made in Update
             CheckForChanges();
         }
 
@@ -154,12 +162,8 @@ namespace ProceduralShapes.Runtime
         {
             bool dirty = false;
 
-            // 1. Check Self
             if (transform.hasChanged)
             {
-                // This resets the hasChanged flag, which might affect other scripts? 
-                // Unity's Transform.hasChanged is generally safe to use if we are the primary logic.
-                // But for UI, relying on Matrix check is safer if we want to avoid side effects.
                 Matrix4x4 currentL2W = transform.localToWorldMatrix;
                 if (currentL2W != m_LastLocalToWorld)
                 {
@@ -167,20 +171,17 @@ namespace ProceduralShapes.Runtime
                     dirty = true;
                 }
                 
-                // Also check rect size changes (sometimes handled by OnRectTransformDimensionsChange but safe to double check)
                 if (rectTransform.rect != m_LastRect)
                 {
                     m_LastRect = rectTransform.rect;
                     dirty = true;
                 }
                 
-                transform.hasChanged = false; // Reset to avoid false positives next frame
+                transform.hasChanged = false;
             }
 
-            // 2. Check Mask (if exists)
             if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
             {
-                // Try find mask
                 var mask = GetComponentInParent<ProceduralShapeMask>();
                 if (mask != m_CachedMask)
                 {
@@ -193,7 +194,6 @@ namespace ProceduralShapes.Runtime
             {
                 if (CheckTransformDirty(m_CachedMask.transform, m_CachedMask.Shape.rectTransform)) dirty = true;
                 
-                // Also check Mask's Booleans!
                 if (m_CachedMask.Shape != null)
                 {
                     foreach (var op in m_CachedMask.Shape.BooleanOperations)
@@ -204,7 +204,6 @@ namespace ProceduralShapes.Runtime
                 }
             }
 
-            // 3. Check Boolean Inputs
             if (BooleanOperations.Count > 0)
             {
                 foreach (var input in BooleanOperations)
@@ -221,9 +220,6 @@ namespace ProceduralShapes.Runtime
             {
                 m_NeedUpdate = false;
                 SetMaterialDirty();
-                
-                // Only rebuild vertices if bounds might have changed (optimization: could be refined)
-                // But for now, updating geometry on move is required for correct culling and masking.
                 SetVerticesDirty(); 
             }
         }
@@ -266,7 +262,6 @@ namespace ProceduralShapes.Runtime
 
         private void RebuildGradientTexture()
         {
-            // Only rebuild if texture is actually dirty
             if (!m_TextureDirty && m_GradientTexture != null) return;
 
             int layers = 1 + Effects.Count;
@@ -317,8 +312,6 @@ namespace ProceduralShapes.Runtime
             m_InstanceMaterial.CopyPropertiesFromMaterial(mat);
             m_InstanceMaterial.shaderKeywords = mat.shaderKeywords;
             
-            m_InstanceMaterial.SetFloat(_AntiAliasing, m_EdgeSoftness);
-            
             UpdateBooleanProperties();
             UpdateMask(); 
             
@@ -328,11 +321,10 @@ namespace ProceduralShapes.Runtime
         private void UpdateBooleanProperties()
         {
             int activeCount = 0;
-            // Get Matrix only once
             Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
+            Vector3 selfCenterOffset = GetGeometricCenterOffset();
 
-            // Pass references to avoid struct copying
-            CollectBooleanOps(this, BooleanOperation.Union, ref activeCount, worldToLocal);
+            CollectBooleanOps(this, BooleanOperation.Union, ref activeCount, worldToLocal, selfCenterOffset);
 
             m_InstanceMaterial.SetInt(_BoolParams1, activeCount); 
             if (activeCount > 0)
@@ -348,8 +340,6 @@ namespace ProceduralShapes.Runtime
         {
             if (m_InstanceMaterial == null) return;
 
-            // Mask lookup logic moved to CheckForChanges to avoid GetComponent in GetModifiedMaterial loop
-            // But we double check here if null (first run)
             if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
                 m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
 
@@ -363,13 +353,15 @@ namespace ProceduralShapes.Runtime
                     return;
                 }
                 
-                // Calculate Centers and Matrices
-                // Optimization: Cache transforms locally to avoid property access overhead? 
-                // Unity optimizes transform access in newer versions, but Matrix mult is still CPU work.
+                Vector3 maskPivotOffset = maskShape.GetGeometricCenterOffset();
+                Vector3 maskCenterLocal = (Vector3)maskShape.rectTransform.rect.center + maskPivotOffset;
+                Vector3 maskCenterWorld = maskShape.rectTransform.TransformPoint(maskCenterLocal);
                 
-                Vector3 maskCenterWorld = maskShape.rectTransform.TransformPoint(maskShape.rectTransform.rect.center);
                 Vector3 maskCenterInChildPivotFrame = rectTransform.InverseTransformPoint(maskCenterWorld);
-                Vector3 maskCenterInChildSDFFrame = maskCenterInChildPivotFrame - (Vector3)rectTransform.rect.center;
+                Vector3 childPivotOffset = GetGeometricCenterOffset();
+                Vector3 childGeometricCenter = (Vector3)rectTransform.rect.center + childPivotOffset;
+                
+                Vector3 maskCenterInChildSDFFrame = maskCenterInChildPivotFrame - childGeometricCenter;
                 
                 float maskWorldRot = maskShape.transform.eulerAngles.z;
                 Vector2 maskSize = maskShape.rectTransform.rect.size * maskShape.ShapeScale;
@@ -389,7 +381,6 @@ namespace ProceduralShapes.Runtime
                 m_InstanceMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
                 m_InstanceMaterial.SetVector(_MaskShape, maskShapeParams);
                 
-                // Mask Fill
                 Texture gradientTex = maskShape.mainTexture;
                 m_InstanceMaterial.SetTexture(_MaskTex, gradientTex != null ? gradientTex : Texture2D.whiteTexture);
                 
@@ -400,13 +391,11 @@ namespace ProceduralShapes.Runtime
                 m_InstanceMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, vCoord));
                 m_InstanceMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, 0, 0));
                 
-                // Mask Booleans
                 int activeMaskCount = 0;
                 RectTransform maskRT = maskShape.rectTransform;
-                Vector3 maskCenterOffset = (Vector3)maskRT.rect.center;
                 Matrix4x4 maskWorldToLocal = maskRT.worldToLocalMatrix;
                 
-                CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, maskWorldToLocal, maskCenterOffset);
+                CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, maskWorldToLocal, maskPivotOffset);
                 
                 m_InstanceMaterial.SetInt(_MaskBoolParams, activeMaskCount);
                 if (activeMaskCount > 0)
@@ -424,7 +413,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 rootWorldToLocal)
+        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 rootWorldToLocal, Vector3 rootCenterOffset)
         {
             if (currentShape == null) return;
             
@@ -443,19 +432,22 @@ namespace ProceduralShapes.Runtime
                     else if (input.Operation == BooleanOperation.Subtraction) effectiveOp = BooleanOperation.Union;
                 }
 
-                AddShapeToShader(other, effectiveOp, count, rootWorldToLocal, input.Smoothness);
+                AddShapeToShader(other, effectiveOp, count, rootWorldToLocal, rootCenterOffset, input.Smoothness);
                 count++;
 
-                // Removed isRoot param as logic is consistent
-                CollectBooleanOps(other, input.Operation, ref count, rootWorldToLocal);
+                CollectBooleanOps(other, input.Operation, ref count, rootWorldToLocal, rootCenterOffset);
             }
         }
 
-        private void AddShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 rootWorldToLocal, float smoothness)
+        private void AddShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 rootWorldToLocal, Vector3 rootCenterOffset, float smoothness)
         {
             RectTransform otherRect = shape.rectTransform;
-            Vector3 otherWorldPos = otherRect.position; 
-            Vector3 localPos = rootWorldToLocal.MultiplyPoint3x4(otherWorldPos);
+            Vector3 otherPivotOffset = shape.GetGeometricCenterOffset();
+            Vector3 otherCenterWorld = otherRect.TransformPoint((Vector3)otherRect.rect.center + otherPivotOffset);
+            
+            Vector3 targetPosInRootLocal = rootWorldToLocal.MultiplyPoint3x4(otherCenterWorld);
+            Vector3 finalPos = targetPosInRootLocal - rootCenterOffset;
+
             float relativeRotation = otherRect.eulerAngles.z - rectTransform.eulerAngles.z;
 
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
@@ -464,7 +456,7 @@ namespace ProceduralShapes.Runtime
             else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, shape.m_PolygonRotation * Mathf.Deg2Rad, 0);
             else if (shape.m_ShapeType == ShapeType.Star) m_ShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
 
-            m_ShaderTransform[index] = new Vector4(localPos.x, localPos.y, relativeRotation * Mathf.Deg2Rad, 0);
+            m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, relativeRotation * Mathf.Deg2Rad, 0);
             
             float otherScale = shape.m_ShapeScale; 
             Vector3 lossyScaleRatio = new Vector3(otherRect.lossyScale.x / rectTransform.lossyScale.x, otherRect.lossyScale.y / rectTransform.lossyScale.y, 1f);
@@ -509,9 +501,10 @@ namespace ProceduralShapes.Runtime
         private void AddMaskShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 maskWorldToLocal, Vector3 maskCenterOffset, float smoothness)
         {
             RectTransform otherRect = shape.rectTransform;
-            Vector3 otherWorldPos = otherRect.position; 
+            Vector3 otherPivotOffset = shape.GetGeometricCenterOffset();
+            Vector3 otherCenterWorld = otherRect.TransformPoint((Vector3)otherRect.rect.center + otherPivotOffset);
             
-            Vector3 localPos = maskWorldToLocal.MultiplyPoint3x4(otherWorldPos);
+            Vector3 localPos = maskWorldToLocal.MultiplyPoint3x4(otherCenterWorld);
             localPos -= maskCenterOffset;
             
             float relativeRotation = otherRect.eulerAngles.z - m_CachedMask.Shape.transform.eulerAngles.z;
@@ -559,19 +552,18 @@ namespace ProceduralShapes.Runtime
             float minY = rect.yMin;
             float maxY = rect.yMax;
             
-            if (m_ShapeScale > 1.0f)
-            {
-                float cx = rect.center.x;
-                float cy = rect.center.y;
-                float hw = rect.width * 0.5f * m_ShapeScale;
-                float hh = rect.height * 0.5f * m_ShapeScale;
-                minX = Mathf.Min(minX, cx - hw);
-                maxX = Mathf.Max(maxX, cx + hw);
-                minY = Mathf.Min(minY, cy - hh);
-                maxY = Mathf.Max(maxY, cy + hh);
-            }
+            Vector2 pivotOffset = GetGeometricCenterOffset();
+            float cx = rect.center.x + pivotOffset.x;
+            float cy = rect.center.y + pivotOffset.y;
+            
+            float hw = rect.width * 0.5f * m_ShapeScale;
+            float hh = rect.height * 0.5f * m_ShapeScale;
+            
+            minX = Mathf.Min(minX, cx - hw);
+            maxX = Mathf.Max(maxX, cx + hw);
+            minY = Mathf.Min(minY, cy - hh);
+            maxY = Mathf.Max(maxY, cy + hh);
 
-            // Only recurse if we have operations (Optimization)
             if (BooleanOperations.Count > 0)
             {
                 Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
@@ -603,7 +595,7 @@ namespace ProceduralShapes.Runtime
                 if (Effects[i] is DropShadowEffect shadow && shadow.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, i + 1, shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, 0, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
 
-            DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 0, 0, MainFill, new Vector3(0, 0, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y));
+            DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 0, 0, MainFill, new Vector3(0, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerShadowEffect inner && inner.Enabled)
@@ -647,25 +639,6 @@ namespace ProceduralShapes.Runtime
 
         private void DrawLayerQuad(VertexHelper vh, float minX, float maxX, float minY, float maxY, Rect baseRect, int effectType, int textureRowIndex, ShapeFill fill, Vector3 normalData, Vector4 tangentData)
         {
-            float polyCosR = 1f, polySinR = 0f;
-            float baseWidth = baseRect.width, baseHeight = baseRect.height;
-            float rotation = 0f;
-
-            if (m_ShapeType == ShapeType.Polygon) rotation = m_PolygonRotation;
-            else if (m_ShapeType == ShapeType.Star) rotation = m_StarRotation;
-
-            if (rotation != 0f)
-            {
-                float rad = -rotation * Mathf.Deg2Rad; 
-                polyCosR = Mathf.Cos(rad); polySinR = Mathf.Sin(rad);
-                if (effectType == 1 || effectType == 3)
-                {
-                    float ox = normalData.x, oy = normalData.y;
-                    normalData.x = ox * polyCosR - oy * polySinR;
-                    normalData.y = ox * polySinR + oy * polyCosR;
-                }
-            }
-
             Vector4 uv1_shapeParams = Vector4.zero;
             if (m_ShapeType == ShapeType.Rectangle) uv1_shapeParams = m_CornerRadius;
             else if (m_ShapeType == ShapeType.Polygon) uv1_shapeParams = new Vector4(m_PolygonSides, m_PolygonRounding, 0, 0);
@@ -673,28 +646,54 @@ namespace ProceduralShapes.Runtime
 
             float packedShapeData = (float)m_ShapeType + (m_CornerSmoothing * 0.99f);
             
-            float scaledW = baseWidth * m_ShapeScale;
-            float scaledH = baseHeight * m_ShapeScale;
+            float scaledW = baseRect.width * m_ShapeScale;
+            float scaledH = baseRect.height * m_ShapeScale;
             Vector4 uv2_baseData = new Vector4(scaledW, scaledH, packedShapeData, effectType);
             
             float packedRowAndHeight = textureRowIndex + (m_GradientTexture.height * 100f);
             Vector4 uv3_fillParams = new Vector4(packedRowAndHeight, (float)fill.Type, fill.GradientAngle, fill.GradientScale);
 
+            Vector2 pivotOffset = GetGeometricCenterOffset();
+
             UIVertex vert = UIVertex.simpleVert;
             vert.color = color; 
+            
+            float baseRotation = 0f;
+            if (m_ShapeType == ShapeType.Polygon) baseRotation = m_PolygonRotation * Mathf.Deg2Rad;
+            else if (m_ShapeType == ShapeType.Star) baseRotation = m_StarRotation * Mathf.Deg2Rad;
+            
+            // --- PACKING STRATEGY ---
+            // Effect Type 1 (DropShadow): normal = (OffX, OffY, Blur), tangent = (Spread, Align, GradX, GradY) -> TANGENT.Y free for ROT
+            // Effect Type 3 (InnerShadow): same as DropShadow
+            // Effect Type 0/2/4 (Main, Stroke, Blur): normal = (Rot, AA, Blur)
+            
+            if (effectType == 1 || effectType == 3) 
+            {
+                vert.normal = new Vector3(normalData.x, normalData.y, normalData.z);
+                // Pack Rotation in Tangent.y (Alignment unused for Shadow)
+                // Tangent: x=Spread, y=Rot, z=GradX, w=GradY
+                vert.tangent = new Vector4(tangentData.x, baseRotation, tangentData.z, tangentData.w);
+            }
+            else
+            {
+                // Main / Stroke / Blur
+                // normal.x = Rotation, normal.y = AA, normal.z = Blur
+                vert.normal = new Vector3(baseRotation, normalData.y, normalData.z);
+                vert.tangent = tangentData; // Align uses tangent.y in Stroke, so it fits.
+            }
+            
             vert.uv1 = uv1_shapeParams;
             vert.uv2 = uv2_baseData;
             vert.uv3 = uv3_fillParams;
-            vert.normal = normalData;
-            vert.tangent = tangentData;
 
             int startIndex = vh.currentVertCount;
-            Vector2 GetRotatedUV0(float x, float y) => new Vector2(x * polyCosR - y * polySinR, x * polySinR + y * polyCosR);
-
-            vert.position = new Vector3(minX, minY); vert.uv0 = GetRotatedUV0(minX - baseRect.center.x, minY - baseRect.center.y); vh.AddVert(vert);
-            vert.position = new Vector3(minX, maxY); vert.uv0 = GetRotatedUV0(minX - baseRect.center.x, maxY - baseRect.center.y); vh.AddVert(vert);
-            vert.position = new Vector3(maxX, maxY); vert.uv0 = GetRotatedUV0(maxX - baseRect.center.x, maxY - baseRect.center.y); vh.AddVert(vert);
-            vert.position = new Vector3(maxX, minY); vert.uv0 = GetRotatedUV0(maxX - baseRect.center.x, minY - baseRect.center.y); vh.AddVert(vert);
+            float cx = baseRect.center.x + pivotOffset.x;
+            float cy = baseRect.center.y + pivotOffset.y;
+            
+            vert.position = new Vector3(minX, minY); vert.uv0 = new Vector2(minX - cx, minY - cy); vh.AddVert(vert);
+            vert.position = new Vector3(minX, maxY); vert.uv0 = new Vector2(minX - cx, maxY - cy); vh.AddVert(vert);
+            vert.position = new Vector3(maxX, maxY); vert.uv0 = new Vector2(maxX - cx, maxY - cy); vh.AddVert(vert);
+            vert.position = new Vector3(maxX, minY); vert.uv0 = new Vector2(maxX - cx, minY - cy); vh.AddVert(vert);
 
             vh.AddTriangle(startIndex + 0, startIndex + 1, startIndex + 2);
             vh.AddTriangle(startIndex + 2, startIndex + 3, startIndex + 0);

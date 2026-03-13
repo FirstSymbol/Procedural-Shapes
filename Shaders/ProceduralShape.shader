@@ -62,7 +62,7 @@
             struct v2f {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                float3 normal : NORMAL; // x=unused, y=Softness(AA), z=BlurRadius
+                float3 normal : NORMAL; 
                 float4 tangent : TANGENT;
                 float2 uv0 : TEXCOORD0;
                 float4 shapeParams : TEXCOORD1;
@@ -118,52 +118,43 @@
                 float cornerSmoothing = frac(i.baseData.z) / 0.99;
                 float effectType = i.baseData.w; 
                 
-                if (effectType == 1.0) {
-                    p -= i.normal.xy; // Offset for DropShadow passed in normal.xy?
-                    // Wait, previous code used i.normal.xy for DropShadow offset.
-                    // But now we use i.normal.y for AA and i.normal.z for Blur.
-                    // We have a conflict.
-                    // Let's re-map:
-                    // DropShadow Offset was passed in DrawLayerQuad as 'normalData'.
-                    // Main Shape passes (0, Softness, Blur)
-                    // DropShadow passes (OffsetX, OffsetY, Blur)
-                    // So for DropShadow, Softness is missing from normal.y?
-                    // We can assume standard softness for DropShadow or pack it elsewhere?
-                    // Or pack Offset in Tangent?
-                    // Tangent is (Spread, Alignment, GradOffX, GradOffY). Full.
-                    // Normal is (OffX, OffY, Blur).
-                    // We need a place for AA.
-                    // DropShadow usually implies soft edges anyway (Blur).
-                    // If EffectType == 1 (Shadow), normal.xy is Offset. normal.z is Blur.
-                    // We can hardcode AA for shadow or use Blur as AA.
-                    // For Main Shape (EffectType 0), normal.x is unused, normal.y = AA, normal.z = Blur.
+                // --- UNPACKING ---
+                float aa = 1.0;
+                float blur = 0.0;
+                float baseRotation = 0.0;
+                
+                if (effectType == 1.0 || effectType == 3.0) { // Shadow
+                    // Normal: x=OffX, y=OffY, z=Blur
+                    // Tangent: y=Rotation
+                    p -= i.normal.xy; 
+                    blur = i.normal.z;
+                    baseRotation = i.tangent.y;
+                    aa = 1.0; // Fixed AA for shadows
+                } else {
+                    // Main / Stroke / Blur
+                    // Normal: x=Rotation, y=AA, z=Blur
+                    baseRotation = i.normal.x;
+                    aa = max(i.normal.y, 0.001);
+                    blur = i.normal.z;
                 }
                 
-                // --- RESOLVE NORMAL DATA USAGE ---
-                // Default AA
-                float aa = 1.0; 
+                // Add base AA to blur
+                blur = max(blur, aa);
                 
-                if (effectType == 1.0) {
-                    // Drop Shadow: normal.xy = Offset, normal.z = Blur
-                    p -= i.normal.xy;
-                    // AA for shadow is usually irrelevant if blurred, but let's use fixed reasonable value
-                    aa = 1.0; 
-                } else if (effectType == 3.0) {
-                    // Inner Shadow: normal.xy = Offset, normal.z = Blur
-                    // Same conflict.
-                    aa = 1.0;
-                } else {
-                    // Main Shape / Stroke / Blur Layer
-                    // normal.y = AA
-                    aa = max(i.normal.y, 0.001);
+                // Apply Rotation to P ONLY for Base Shape Calculation
+                float2 p_rotated = p;
+                if (abs(baseRotation) > 0.0001) {
+                    float s = sin(-baseRotation);
+                    float c = cos(-baseRotation);
+                    p_rotated = float2(p.x * c - p.y * s, p.x * s + p.y * c);
                 }
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
-                // 1. Вычисляем SDF (только базовая фигура)
-                float d = GetBasicSDF(p, halfSize, shapeType, cornerSmoothing, i.shapeParams);
+                // 1. Base Shape SDF (using Rotated P)
+                float d = GetBasicSDF(p_rotated, halfSize, shapeType, cornerSmoothing, i.shapeParams);
 
-                // --- BOOLEAN OPERATIONS LOOP ---
+                // --- BOOLEAN OPERATIONS (using Original P) ---
                 int boolCount = _BoolParams1;
                 if (boolCount > 0) {
                     for (int k = 0; k < 8; k++) {
@@ -178,6 +169,7 @@
                         float2 boolSize = _BoolData_Size[k].xy;
                         float4 boolShapeParams = _BoolData_ShapeParams[k];
 
+                        // Transform P (Original) to Cutter Space
                         float2 p2 = p - boolTrans.xy;
                         float rot = boolTrans.z;
                         if (abs(rot) > 0.0001) {
@@ -222,7 +214,7 @@
                     float maskSmooth = _MaskParams.z;
                     float maskFeather = _MaskParams.w;
                     
-                    float2 maskP = p - _MaskTrans.xy;
+                    float2 maskP = p - _MaskTrans.xy; // Original P
                     float maskRot = _MaskTrans.z;
                     if (abs(maskRot) > 0.0001) {
                          float s = sin(-maskRot);
@@ -328,8 +320,6 @@
                 }
                 else if (effectType == 3.0) d += spread; 
 
-                float blur = max(i.normal.z, aa);
-                
                 float mask = 0;
                 if (effectType == 3.0) { 
                     float baseD = d - spread; 
@@ -347,15 +337,16 @@
                 float gradScale = i.fillParams.w;
                 float2 gradOffset = i.tangent.zw;
 
-                float2 gradP = p - (halfSize * gradOffset);
-                if (effectType == 1.0 || effectType == 3.0) gradP -= i.normal.xy; // Offset for Shadows from normal.xy?
-                // Wait, if effectType == 1 (Shadow), we ALREADY subtracted offset from p at start of shader.
-                // "if (effectType == 1.0) p -= i.normal.xy;"
-                // So here 'p' is already shifted.
-                // Do we need to shift gradP?
-                // Gradient texture coordinates should stay with the shadow?
-                // If p is shifted, gradP (derived from p) is shifted. So the texture moves with the shadow. Correct.
+                // Gradient calculation uses rotated P as well?
+                // Usually gradient rotates with the shape.
+                // So use p_rotated.
+                // But shadows? Shadows use 'p' (offsetted). 
+                // Shadows should also rotate.
+                // But we used 'p' (offsetted) for 'p_rotated'.
+                // If effectType==1, p was shifted. then rotated. 
+                // So gradP should use p_rotated.
                 
+                float2 gradP = p_rotated - (halfSize * gradOffset);
                 gradP /= max(gradScale, 0.001);
 
                 float t = 0.5;

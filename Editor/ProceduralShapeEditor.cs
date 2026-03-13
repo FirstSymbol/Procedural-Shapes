@@ -12,6 +12,7 @@ namespace ProceduralShapes.Editor
         private SerializedProperty m_DisableRendering;
         private SerializedProperty m_EdgeSoftness;
         private SerializedProperty m_ShapeScale;
+        private SerializedProperty m_ShapePivot;
         private SerializedProperty m_ShapeType, m_CornerRadius, m_CornerSmoothing;
         private SerializedProperty m_PolygonSides, m_PolygonRounding, m_PolygonRotation;
         private SerializedProperty m_StarPoints, m_StarRatio, m_StarRoundingOuter, m_StarRoundingInner, m_StarRotation;
@@ -23,6 +24,7 @@ namespace ProceduralShapes.Editor
             m_DisableRendering = serializedObject.FindProperty("m_DisableRendering");
             m_EdgeSoftness = serializedObject.FindProperty("m_EdgeSoftness");
             m_ShapeScale = serializedObject.FindProperty("m_ShapeScale");
+            m_ShapePivot = serializedObject.FindProperty("m_ShapePivot");
             m_ShapeType = serializedObject.FindProperty("m_ShapeType");
             m_CornerRadius = serializedObject.FindProperty("m_CornerRadius");
             m_CornerSmoothing = serializedObject.FindProperty("m_CornerSmoothing");
@@ -53,14 +55,12 @@ namespace ProceduralShapes.Editor
             EditorGUILayout.LabelField("🎨 Procedural Shape", titleStyle);
             EditorGUILayout.Space(5);
             
-            // --- DISABLE RENDERING TOGGLE ---
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.PropertyField(m_DisableRendering, new GUIContent("Disable Rendering", "If checked, this shape won't be drawn but can still be used as a Cutter for other shapes."));
             EditorGUILayout.EndVertical();
             
             EditorGUILayout.Space(5);
 
-            // --- БЛОК 1: SHAPE ---
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUILayout.Space(5);
             EditorGUILayout.LabelField("1. Geometry", sectionTitle);
@@ -68,13 +68,12 @@ namespace ProceduralShapes.Editor
 
             EditorGUILayout.PropertyField(m_ShapeType);
             
-            // IF NONE, SKIP PARAMETERS
             bool isNone = (m_ShapeType.enumValueIndex == (int)ShapeType.None);
 
             if (!isNone)
             {
-                // --- SHAPE SCALE ---
                 EditorGUILayout.PropertyField(m_ShapeScale, new GUIContent("Shape Scale", "Uniform scale factor for the shape inside the RectTransform bounds."));
+                EditorGUILayout.PropertyField(m_ShapePivot, new GUIContent("Shape Pivot", "Geometric pivot relative to RectTransform center. (0.5, 0.5) is centered."));
                 EditorGUILayout.Space(5);
 
                 if (m_ShapeType.enumValueIndex == (int)ShapeType.Rectangle)
@@ -116,7 +115,6 @@ namespace ProceduralShapes.Editor
             GUILayout.Space(5);
             EditorGUILayout.EndVertical();
 
-            // --- БЛОК 2: BOOLEAN OPERATIONS ---
             EditorGUILayout.Space(5);
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUILayout.Space(5);
@@ -135,13 +133,11 @@ namespace ProceduralShapes.Editor
                 SerializedProperty item = m_BooleanOperations.GetArrayElementAtIndex(i);
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
                 
-                // Header Row with Reorder Buttons
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField($"Op {i + 1}", EditorStyles.boldLabel, GUILayout.Width(40));
                 
                 GUILayout.FlexibleSpace();
                 
-                // UP Button
                 EditorGUI.BeginDisabledGroup(i == 0);
                 if (GUILayout.Button("▲", GUILayout.Width(20)))
                 {
@@ -153,7 +149,6 @@ namespace ProceduralShapes.Editor
                 }
                 EditorGUI.EndDisabledGroup();
 
-                // DOWN Button
                 EditorGUI.BeginDisabledGroup(i == m_BooleanOperations.arraySize - 1);
                 if (GUILayout.Button("▼", GUILayout.Width(20)))
                 {
@@ -165,7 +160,6 @@ namespace ProceduralShapes.Editor
                 }
                 EditorGUI.EndDisabledGroup();
 
-                // REMOVE Button
                 if (GUILayout.Button("X", GUILayout.Width(25)))
                 {
                     m_BooleanOperations.DeleteArrayElementAtIndex(i);
@@ -186,7 +180,6 @@ namespace ProceduralShapes.Editor
             GUILayout.Space(5);
             EditorGUILayout.EndVertical();
 
-            // --- БЛОК 3: FILL ---
             EditorGUILayout.Space(5);
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUILayout.Space(5);
@@ -200,7 +193,6 @@ namespace ProceduralShapes.Editor
             GUILayout.Space(5);
             EditorGUILayout.EndVertical();
 
-            // --- БЛОК 4: EFFECTS ---
             EditorGUILayout.Space(5);
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUILayout.Space(5);
@@ -250,7 +242,6 @@ namespace ProceduralShapes.Editor
             
             GUILayout.FlexibleSpace();
 
-            // UP Button
             EditorGUI.BeginDisabledGroup(index == 0);
             if (GUILayout.Button("▲", GUILayout.Width(20)))
             {
@@ -262,7 +253,6 @@ namespace ProceduralShapes.Editor
             }
             EditorGUI.EndDisabledGroup();
 
-            // DOWN Button
             EditorGUI.BeginDisabledGroup(index == listProp.arraySize - 1);
             if (GUILayout.Button("▼", GUILayout.Width(20)))
             {
@@ -274,7 +264,6 @@ namespace ProceduralShapes.Editor
             }
             EditorGUI.EndDisabledGroup();
 
-            // REMOVE Button
             if (GUILayout.Button("X", GUILayout.Width(25)))
             {
                 listProp.DeleteArrayElementAtIndex(index);
