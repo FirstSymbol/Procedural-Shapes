@@ -53,7 +53,7 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
         // Polygon
         float n = max(3.0, params.x); 
         float an = 3.14159265 / n;
-        float a = atan2(p.x, p.y);
+        float a = atan2(p.x, p.y); 
         float bn = floor(a / (2.0 * an));
         float f = a - (bn + 0.5) * 2.0 * an; 
         float2 p_sec = length(p) * float2(abs(sin(f)), cos(f)); 

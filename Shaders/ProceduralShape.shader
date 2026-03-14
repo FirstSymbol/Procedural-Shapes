@@ -128,38 +128,27 @@
                 
                 float aa = 1.0;
                 float blur = 0.0;
-                float baseRotation = 0.0;
                 float internalPadding = 0.0;
                 
                 if (effectType == 1.0 || effectType == 3.0) { // Shadows
                     p -= i.normal.xy; 
                     blur = i.normal.z;
-                    baseRotation = i.tangent.y;
                     aa = 1.0; 
                 } else { // Main Fill, Stroke, Blur
                     internalPadding = i.normal.x;
                     aa = max(i.normal.y, 0.001);
                     blur = i.normal.z;
-                    baseRotation = i.tangent.y;
                 }
                 
                 blur = max(blur, aa);
                 
-                float2 p_rotated = p;
-                if (abs(baseRotation) > 0.0001) {
-                    float s = sin(-baseRotation);
-                    float c = cos(-baseRotation);
-                    p_rotated = float2(p.x * c - p.y * s, p.x * s + p.y * c);
-                }
-
                 // --- EDGE NOISE DISTORTION ---
-                // Пакуем NoiseAmount в uv3.z (дробная часть) и NoiseScale в uv3.w
                 float noiseAmount = frac(i.fillParams.z) * 100.0;
                 float noiseScale = i.fillParams.w;
                 
-                float2 noiseP = p_rotated;
+                float2 noiseP = p;
                 if (noiseAmount > 0.001) {
-                    float n = noise(p_rotated * noiseScale * 0.1);
+                    float n = noise(p * noiseScale * 0.1);
                     noiseP += (n * 2.0 - 1.0) * noiseAmount;
                 }
                 
@@ -216,9 +205,6 @@
                     float maskSmooth = _MaskParams.z;
                     float maskFeather = _MaskParams.w;
                     
-                    // Transform P (Child Local) to Mask SDF Space using Matrix
-                    // We need to use 'p' (original unrotated child local coords)
-                    // The matrix _MaskMatrix handles the full transform chain.
                     float4x4 childToMask = float4x4(
                         _MaskMatrixX,
                         _MaskMatrixY,
@@ -244,8 +230,6 @@
                             float2 bSize = _MaskBoolSize[j].xy;
                             float4 bParams = _MaskBoolShapeParams[j];
 
-                            // Boolean positions are now already correctly in the Mask SDF Space.
-                            // We only need to apply the relative geometric rotation.
                             float2 p3 = maskP - bTrans.xy; 
                             float rot3 = bTrans.z;
                             if (abs(rot3) > 0.0001) {
@@ -316,8 +300,8 @@
                         float dashLen = i.uv0.z;
                         float spaceLen = i.uv0.w;
                         float perimeter = 0;
-                        if (shapeType == 5.0) perimeter = p_rotated.x;
-                        else perimeter = (atan2(p_rotated.y, p_rotated.x) + 3.14159265) * length(p_rotated);
+                        if (shapeType == 5.0) perimeter = p.x;
+                        else perimeter = (atan2(p.y, p.x) + 3.14159265) * length(p);
                         
                         float dashCycle = dashLen + spaceLen;
                         float dashVal = frac(perimeter / dashCycle);
@@ -329,7 +313,9 @@
                 float mask = 0;
                 if (effectType == 3.0) { 
                     float baseD = d - spread; 
-                    mask = smoothstep(-blur, blur, d) * smoothstep(aa, -aa, baseD);
+                    // To fix the gap, we make the mask reach 1.0 exactly at the border (baseD = 0)
+                    // and apply the shape's AA separately to ensure a clean cut.
+                    mask = saturate(smoothstep(-blur, 0, baseD)) * smoothstep(aa, -aa, baseD);
                 } else if (effectType == 5.0) {
                     mask = 1.0; 
                 } else {
@@ -346,11 +332,11 @@
 
                 float4 colorSample;
                 if (fillType > 3.5) { // Pattern
-                    float2 patternUV = p_rotated / halfSize * 0.5 + 0.5;
+                    float2 patternUV = p / halfSize * 0.5 + 0.5;
                     patternUV = patternUV * gradScale + gradOffset;
                     colorSample = tex2D(_PatternTex, patternUV);
                 } else {
-                    float2 gradP = p_rotated - (halfSize * gradOffset);
+                    float2 gradP = p - (halfSize * gradOffset);
                     gradP /= max(gradScale, 0.001);
 
                     float t = 0.5;

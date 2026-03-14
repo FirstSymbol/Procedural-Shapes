@@ -49,6 +49,8 @@ namespace ProceduralShapes.Runtime
                 if (!effect.Enabled) continue;
                 if (effect is DropShadowEffect shadow)
                     maxExpand = Mathf.Max(maxExpand, Mathf.Max(Mathf.Abs(shadow.Offset.x), Mathf.Abs(shadow.Offset.y)) + shadow.Blur * 2f + Mathf.Max(0, shadow.Spread));
+                else if (effect is OuterGlowEffect glow)
+                    maxExpand = Mathf.Max(maxExpand, glow.Blur * 2f + Mathf.Max(0, glow.Spread));
                 else if (effect is StrokeEffect stroke)
                     maxExpand = Mathf.Max(maxExpand, stroke.Alignment == StrokeAlignment.Outside ? stroke.Width : (stroke.Alignment == StrokeAlignment.Center ? stroke.Width * 0.5f : 0f));
                 else if (effect is BlurEffect blur)
@@ -86,10 +88,6 @@ namespace ProceduralShapes.Runtime
                 if (Effects[i] is StrokeEffect stroke && stroke.Enabled)
                     DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 2, m_EffectAtlasIndices[i], stroke.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(stroke.Width, (float)stroke.Alignment, stroke.Fill.GradientOffset.x, stroke.Fill.GradientOffset.y), maxExpand, new Vector2(stroke.DashSize, stroke.DashSpace));
             
-            for (int i = 0; i < Effects.Count; i++)
-                if (Effects[i] is BlurEffect blur && blur.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 4, m_EffectAtlasIndices[i], blur.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(blur.Radius, 0, blur.Fill.GradientOffset.x, blur.Fill.GradientOffset.y));
-
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is BevelEffect bevel && bevel.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 5, m_EffectAtlasIndices[i], bevel.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, bevel.Distance), new Vector4(bevel.HighlightAlpha, bevel.ShadowAlpha, bevel.Angle * Mathf.Deg2Rad, 0));
