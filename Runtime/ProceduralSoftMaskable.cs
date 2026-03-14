@@ -134,7 +134,7 @@ namespace ProceduralShapes.Runtime
             Vector2 maskScale = maskShape.ShapeScale;
             Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y); 
             
-            m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
+            m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness + maskShape.m_EdgeSoftness));
             m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
             m_MaskMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
             

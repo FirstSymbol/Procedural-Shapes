@@ -105,7 +105,7 @@ namespace ProceduralShapes.Runtime
 
                 Vector2 mScale = maskS.ShapeScale;
                 maskSize = new Vector4(maskSizeRaw.x * mScale.x, maskSizeRaw.y * mScale.y, 0, 0);
-                maskParams = new Vector4(1f, (float)maskS.m_ShapeType, maskS.m_CornerSmoothing, m_CachedMask.Softness);
+                maskParams = new Vector4(1f, (float)maskS.m_ShapeType, maskS.m_CornerSmoothing, m_CachedMask.Softness + maskS.m_EdgeSoftness);
                 maskShape = maskS.GetPackedShapeParams();
                 
                 maskTex = maskS.mainTexture;

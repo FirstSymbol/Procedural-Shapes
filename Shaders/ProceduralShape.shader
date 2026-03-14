@@ -267,6 +267,76 @@ Shader "UI/ProceduralShapes/Shape"
                 finalColor.a *= mask; 
                 finalColor.rgb *= finalColor.a;
 
+                if (_MaskParams.x > 0.5) {
+                    float4x4 localToMaskSDF = float4x4(_MaskMatrixX, _MaskMatrixY, _MaskMatrixZ, _MaskMatrixW);
+                    float2 maskP = mul(localToMaskSDF, float4(p_orig, 0.0, 1.0)).xy;
+                    
+                    float maskType = _MaskParams.y;
+                    float maskSmooth = _MaskParams.z;
+                    float maskFeather = _MaskParams.w;
+                    
+                    float mD = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
+                    
+                    int mBoolCount = _MaskBoolParams;
+                    for (int mk = 0; mk < 8; mk++) {
+                        if (mk >= mBoolCount) break;
+                        float mbOp = _MaskBoolOpType[mk].x;
+                        float mbType = _MaskBoolOpType[mk].y;
+                        float mbSmooth = _MaskBoolOpType[mk].z;
+                        float mbSmoothBlend = _MaskBoolOpType[mk].w;
+                        float4 mbTrans = _MaskBoolTransform[mk];
+                        float2 mbSize = _MaskBoolSize[mk].xy;
+                        float4 mbShapeParams = _MaskBoolShapeParams[mk];
+
+                        float2 mp2 = maskP - mbTrans.xy;
+                        if (abs(mbTrans.z) > 0.0001) {
+                            float s = sin(-mbTrans.z); float c = cos(-mbTrans.z);
+                            mp2 = float2(mp2.x * c - mp2.y * s, mp2.x * s + mp2.y * c);
+                        }
+                        float md2 = GetBasicSDF(mp2, mbSize * 0.5, mbType, mbSmooth, mbShapeParams);
+                        if (mbSmoothBlend > 0.001) mD = smin_op(mD, md2, mbOp, mbSmoothBlend);
+                        else mD = hard_op(mD, md2, mbOp);
+                    }
+                    
+                    float mAlpha = smoothstep(max(0.001, maskFeather), -max(0.001, maskFeather), mD);
+                    
+                    float mFillType = _MaskFillParams.x;
+                    float mGradAngle = _MaskFillParams.y;
+                    float mGradScale = _MaskFillParams.z;
+                    float mRowIndex = _MaskFillParams.w;
+                    float2 mGradOffset = _MaskFillOffset.xy; 
+                    float mBaseAlpha = _MaskFillOffset.z;
+
+                    float2 mHalfSize = _MaskSize.xy * 0.5;
+                    float2 mGradP = maskP - (mHalfSize * mGradOffset);
+                    mGradP /= max(mGradScale, 0.001);
+
+                    float mt = 0.5;
+                    if (mFillType > 0.5 && mFillType < 1.5) {
+                        float rad = mGradAngle * 0.0174533;
+                        float2 dir = float2(cos(rad), sin(rad));
+                        mt = (dot(mGradP, dir) / max(abs(dir.x*mHalfSize.x)+abs(dir.y*mHalfSize.y), 0.001)) * 0.5 + 0.5;
+                    } else if (mFillType > 1.5 && mFillType < 2.5) {
+                        mt = length(mGradP) / max(max(mHalfSize.x, mHalfSize.y), 0.001);
+                    } else if (mFillType > 2.5 && mFillType < 3.5) {
+                        mt = frac((atan2(mGradP.y, mGradP.x) - mGradAngle * 0.0174533) / 6.28318 + 0.5);
+                    }
+                    
+                    float mVCoord = (mRowIndex * 3.0 + 1.5) / 512.0;
+                    float mFillAlpha = 1.0;
+                    if (mFillType > 0.5) { 
+                         mFillAlpha = tex2D(_MaskTex, float2(saturate(mt), mVCoord)).a;
+                    } else {
+                         mFillAlpha = tex2D(_MaskTex, float2(0.5, mVCoord)).a; 
+                    }
+
+                    float mTotalAlpha = mAlpha * mFillAlpha * mBaseAlpha;
+                    finalColor.a *= mTotalAlpha;
+                    finalColor.rgb *= mTotalAlpha;
+                }
+
+                if (finalColor.a <= 0.001) discard;
+
                 #ifdef UNITY_UI_CLIP_RECT
                 finalColor *= UnityGet2DClipping(i.worldPosition.xy, _ClipRect);
                 #endif
