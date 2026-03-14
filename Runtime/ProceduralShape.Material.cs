@@ -35,6 +35,7 @@ namespace ProceduralShapes.Runtime
 
         private int m_ActiveBoolCount;
         private int m_ActiveMaskBoolCount;
+        [System.NonSerialized] private int m_LastBaseMatId = 0;
 
         public override Material GetModifiedMaterial(Material baseMaterial)
         {
@@ -48,23 +49,21 @@ namespace ProceduralShapes.Runtime
                 return base.GetModifiedMaterial(baseMaterial);
             }
 
-            // Path Flattening
+            // 1. Gather Data (Needed for both Hash and Applying)
             if (m_ShapeType == ShapeType.Path)
             {
-                if (m_FlattenedPath == null || m_FlattenedPath.Count == 0)
+                if (m_FlattenedPath == null) m_FlattenedPath = new List<Vector2>();
+                if (m_FlattenedPath.Count == 0)
                 {
-                    if (m_FlattenedPath == null) m_FlattenedPath = new List<Vector2>();
                     PathUtils.FlattenPath(m_ShapePath, m_FlattenedPath);
                 }
             }
 
-            // 1. Gather Boolean Data
             Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
             Vector2 selfCenterOffset = GetGeometricCenterOffset();
             m_ActiveBoolCount = 0;
             CollectBooleanOps(this, BooleanOperation.Union, ref m_ActiveBoolCount, worldToLocal, selfCenterOffset);
 
-            // 2. Gather Mask Data
             bool hasMask = false;
             Vector4 maskParams = Vector4.zero;
             Vector4 maskSize = Vector4.zero;
@@ -82,112 +81,92 @@ namespace ProceduralShapes.Runtime
             {
                 hasMask = true;
                 ProceduralShape maskS = m_CachedMask.Shape;
-                
                 Matrix4x4 childLocalToWorld = rectTransform.localToWorldMatrix;
                 Matrix4x4 maskWorldToLocal = maskS.rectTransform.worldToLocalMatrix;
-                
                 Vector2 maskSizeRaw = maskS.rectTransform.rect.size;
                 Vector2 maskPivot = maskS.rectTransform.pivot;
                 Vector2 maskPivotOffset = maskS.GetGeometricCenterOffset();
-                
                 Vector3 maskRectCenterFromPivot = new Vector3((0.5f - maskPivot.x) * maskSizeRaw.x, (0.5f - maskPivot.y) * maskSizeRaw.y, 0f);
                 Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
-                
                 Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
-                Matrix4x4 maskRotateToSDF = Matrix4x4.identity; // Rotation removed
-                
-                Matrix4x4 localToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal * childLocalToWorld;
-
+                Matrix4x4 localToMaskSDF = maskCenterTranslate * maskWorldToLocal * childLocalToWorld;
                 Vector2 childGeomCenterLocal = rectTransform.rect.center + selfCenterOffset;
                 Matrix4x4 childGeomToLocal = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0));
-                
                 maskMatrix = localToMaskSDF * childGeomToLocal;
 
                 Vector2 mScale = maskS.ShapeScale;
                 maskSize = new Vector4(maskSizeRaw.x * mScale.x, maskSizeRaw.y * mScale.y, 0, 0);
-                maskParams = new Vector4(1f, (float)maskS.m_ShapeType, maskS.m_CornerSmoothing, m_CachedMask.Softness);
+                maskParams = new Vector4(1f, (float)maskS.m_ShapeType, maskS.m_CornerSmoothing, m_CachedMask.Softness + maskS.m_EdgeSoftness);
                 maskShape = maskS.GetPackedShapeParams();
-                
                 maskTex = maskS.mainTexture;
                 ShapeFill mFill = maskS.MainFill;
                 int maskRowIndex = GradientAtlasManager.GetAtlasRow(mFill);
-                
                 float maskAlphaMult = maskS.color.a;
                 if (mFill.Type == FillType.Solid) maskAlphaMult *= mFill.SolidColor.a;
-
                 maskFillParams = new Vector4((float)mFill.Type, mFill.GradientAngle, mFill.GradientScale, (float)maskRowIndex);
                 maskFillOffset = new Vector4(mFill.GradientOffset.x, mFill.GradientOffset.y, maskAlphaMult, 0);
-
-                Matrix4x4 worldToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal;
+                Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
                 CollectMaskBooleanOps(maskS, BooleanOperation.Union, ref m_ActiveMaskBoolCount, worldToMaskSDF);
             }
 
-            // 3. Compute Hash
-            MaterialHashKey key = new MaterialHashKey();
-            key.BaseMatId = baseMaterial.GetInstanceID();
-            key.PatternId = (MainFill.Type == FillType.Pattern && MainFill.PatternTexture != null) ? MainFill.PatternTexture.GetInstanceID() : 0;
-            key.Padding = m_InternalPadding;
-            
-            int h1 = 17;
-            HashUtils.Add(ref h1, m_ActiveBoolCount);
+            // 2. Compute "Style Key" (Excluding transforms for pooling/reuse)
+            int styleH1 = 17;
+            HashUtils.Add(ref styleH1, m_ActiveBoolCount);
             for (int i = 0; i < m_ActiveBoolCount; i++) {
-                HashUtils.Add(ref h1, m_ShaderOps[i]);
-                HashUtils.Add(ref h1, m_ShaderShapeParams[i]);
-                HashUtils.Add(ref h1, m_ShaderTransform[i]);
-                HashUtils.Add(ref h1, m_ShaderSize[i]);
+                HashUtils.Add(ref styleH1, m_ShaderOps[i].x); // Op
+                HashUtils.Add(ref styleH1, m_ShaderOps[i].y); // Type
+                HashUtils.Add(ref styleH1, m_ShaderOps[i].z); // Smoothing
+                HashUtils.Add(ref styleH1, m_ShaderOps[i].w); // Smoothness
+                HashUtils.Add(ref styleH1, m_ShaderShapeParams[i]);
             }
 
             if (m_ShapeType == ShapeType.Path && m_FlattenedPath != null)
             {
-                HashUtils.Add(ref h1, m_FlattenedPath.Count);
-                HashUtils.Add(ref h1, m_ShapePath.Closed ? 1f : 0f);
-                HashUtils.Add(ref h1, m_ShapePath.Thickness);
-                foreach (var pt in m_FlattenedPath)
-                {
-                    HashUtils.Add(ref h1, pt.x);
-                    HashUtils.Add(ref h1, pt.y);
-                }
+                HashUtils.Add(ref styleH1, (float)m_ShapeType);
+                HashUtils.Add(ref styleH1, m_FlattenedPath.Count);
+                HashUtils.Add(ref styleH1, m_ShapePath.Closed ? 1f : 0f);
+                HashUtils.Add(ref styleH1, m_ShapePath.Thickness);
+                // Dynamic path points coordinates excluded from Style Hash to prevent material churn
             }
-            
-            int h2 = 31;
-            if (hasMask) {
-                HashUtils.Add(ref h2, 1f); 
-                HashUtils.Add(ref h2, maskParams);
-                HashUtils.Add(ref h2, maskMatrix.GetRow(0));
-                HashUtils.Add(ref h2, maskMatrix.GetRow(1));
-                HashUtils.Add(ref h2, maskMatrix.GetRow(2));
-                HashUtils.Add(ref h2, maskSize);
-                HashUtils.Add(ref h2, maskShape);
-                HashUtils.Add(ref h2, maskTex != null ? maskTex.GetInstanceID() : 0);
-                HashUtils.Add(ref h2, maskFillParams);
-                HashUtils.Add(ref h2, maskFillOffset);
-                
-                HashUtils.Add(ref h2, m_ActiveMaskBoolCount);
-                for (int i = 0; i < m_ActiveMaskBoolCount; i++) {
-                    HashUtils.Add(ref h2, m_MaskShaderOps[i]);
-                    HashUtils.Add(ref h2, m_MaskShaderShapeParams[i]);
-                    HashUtils.Add(ref h2, m_MaskShaderTransform[i]);
-                    HashUtils.Add(ref h2, m_MaskShaderSize[i]);
-                }
-            } else {
-                HashUtils.Add(ref h2, 0f);
-            }
-            
-            key.Hash1 = h1;
-            key.Hash2 = h2;
 
-            // 4. Get/Release Material
-            Material matToUse = ProceduralMaterialPool.GetMaterial(key, baseMaterial);
-            if (m_InstanceMaterial != null && m_InstanceMaterial != matToUse)
+            int styleH2 = 31;
+            if (hasMask) {
+                HashUtils.Add(ref styleH2, 1f);
+                HashUtils.Add(ref styleH2, maskParams.y);
+                HashUtils.Add(ref styleH2, maskParams.z);
+                HashUtils.Add(ref styleH2, maskShape);
+                HashUtils.Add(ref styleH2, maskFillParams.x);
+                HashUtils.Add(ref styleH2, m_ActiveMaskBoolCount);
+                for (int i = 0; i < m_ActiveMaskBoolCount; i++) {
+                    HashUtils.Add(ref styleH2, m_MaskShaderOps[i].x);
+                    HashUtils.Add(ref styleH2, m_MaskShaderOps[i].y);
+                    HashUtils.Add(ref styleH2, m_MaskShaderShapeParams[i]);
+                }
+            }
+
+            MaterialHashKey styleKey = new MaterialHashKey();
+            styleKey.BaseMatId = baseMaterial.GetInstanceID();
+            styleKey.PatternId = (MainFill.Type == FillType.Pattern && MainFill.PatternTexture != null) ? MainFill.PatternTexture.GetInstanceID() : 0;
+            styleKey.Padding = m_InternalPadding;
+            styleKey.Hash1 = styleH1;
+            styleKey.Hash2 = styleH2;
+
+            // 3. Get/Reuse Material
+            Material matToUse = ProceduralMaterialPool.GetMaterial(styleKey, baseMaterial);
+            
+            if (m_InstanceMaterial != null)
             {
+                // Always release the previous reference. If matToUse == m_InstanceMaterial, 
+                // the RefCount was incremented by GetMaterial and is now decremented back, 
+                // resulting in no net change, which is correct.
                 ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
             }
-            m_InstanceMaterial = matToUse;
-
-            // 5. Apply Properties to Material
-            m_InstanceMaterial.CopyPropertiesFromMaterial(baseMaterial); 
             
-            // Force assign Atlas Texture to ensure gradients work with pooled materials
+            m_InstanceMaterial = matToUse;
+            m_LastBaseMatId = styleKey.BaseMatId;
+
+            // 4. Apply Properties (ALWAYS update uniforms)
+            m_InstanceMaterial.CopyPropertiesFromMaterial(baseMaterial); 
             m_InstanceMaterial.SetTexture("_MainTex", mainTexture);
             
             if (MainFill.Type == FillType.Pattern && MainFill.PatternTexture != null)
@@ -225,14 +204,12 @@ namespace ProceduralShapes.Runtime
                 m_InstanceMaterial.SetVector(_MaskMatrixY, maskMatrix.GetRow(1));
                 m_InstanceMaterial.SetVector(_MaskMatrixZ, maskMatrix.GetRow(2));
                 m_InstanceMaterial.SetVector(_MaskMatrixW, maskMatrix.GetRow(3));
-                
                 m_InstanceMaterial.SetVector(_MaskParams, maskParams);
                 m_InstanceMaterial.SetVector(_MaskSize, maskSize);
                 m_InstanceMaterial.SetVector(_MaskShape, maskShape);
                 m_InstanceMaterial.SetTexture(_MaskTex, maskTex != null ? maskTex : Texture2D.whiteTexture);
                 m_InstanceMaterial.SetVector(_MaskFillParams, maskFillParams);
                 m_InstanceMaterial.SetVector(_MaskFillOffset, maskFillOffset);
-                
                 m_InstanceMaterial.SetInt(_MaskBoolParams, m_ActiveMaskBoolCount);
                 if (m_ActiveMaskBoolCount > 0)
                 {
@@ -262,7 +239,6 @@ namespace ProceduralShapes.Runtime
                 if (input.SourceShape == this) continue; 
 
                 ProceduralShape other = input.SourceShape;
-                
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)
                 {
@@ -282,7 +258,6 @@ namespace ProceduralShapes.Runtime
             RectTransform otherRect = shape.rectTransform;
             Vector3 otherPivotOffset = shape.GetGeometricCenterOffset();
             Vector3 otherCenterWorld = otherRect.TransformPoint((Vector3)otherRect.rect.center + otherPivotOffset);
-            
             Vector3 targetPosInRootLocal = rootWorldToLocal.MultiplyPoint3x4(otherCenterWorld);
             Vector3 finalPos = targetPosInRootLocal - rootCenterOffset;
 
@@ -312,7 +287,6 @@ namespace ProceduralShapes.Runtime
                 if (input.SourceShape == m_CachedMask.Shape) continue;
 
                 ProceduralShape other = input.SourceShape;
-                
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)
                 {
@@ -330,14 +304,11 @@ namespace ProceduralShapes.Runtime
         private void AddMaskShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 worldToMaskSDF, float smoothness)
         {
             RectTransform otherRect = shape.rectTransform;
-            
             Vector2 size = otherRect.rect.size;
             Vector2 pivot = otherRect.pivot;
             Vector2 pivotOffset = shape.GetGeometricCenterOffset();
-            
             Vector3 localGeomCenter = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f) + (Vector3)pivotOffset;
             Vector3 worldGeomCenter = otherRect.TransformPoint(localGeomCenter);
-            
             Vector3 posInMaskSDF = worldToMaskSDF.MultiplyPoint3x4(worldGeomCenter);
             
             float maskWorldRot = m_CachedMask.Shape.transform.eulerAngles.z;

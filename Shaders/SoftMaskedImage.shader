@@ -1,4 +1,4 @@
-﻿Shader "UI/ProceduralShapes/SoftMaskedImage"
+Shader "UI/ProceduralShapes/SoftMaskedImage"
 {
     Properties
     {
@@ -67,7 +67,6 @@
                 float4 localPos : TEXCOORD2;
             };
 
-            // ... (keep uniform declarations intact) ...
             sampler2D _MainTex;
             fixed4 _Color;
             float4 _ClipRect;
@@ -147,16 +146,8 @@
 
                             float d2 = GetBasicSDF(p2, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
 
-                            if (smoothBlend > 0.001) {
-                                if (boolOp < 1.5) d = smin(d, d2, smoothBlend);
-                                else if (boolOp < 2.5) d = smax(d, -d2, smoothBlend);
-                                else if (boolOp < 3.5) d = smax(d, d2, smoothBlend);
-                            } else {
-                                if (boolOp < 1.5) d = min(d, d2); 
-                                else if (boolOp < 2.5) d = max(d, -d2); 
-                                else if (boolOp < 3.5) d = max(d, d2); 
-                                else if (boolOp < 4.5) d = max(min(d, d2), -max(d, d2)); 
-                            }
+                            if (smoothBlend > 0.001) d = smin_op(d, d2, boolOp, smoothBlend);
+                            else d = hard_op(d, d2, boolOp);
                         }
                     }
                     

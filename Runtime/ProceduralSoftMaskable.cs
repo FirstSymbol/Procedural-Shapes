@@ -56,9 +56,33 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        private uint m_LastMaskVersion = 0;
+        private Vector3 m_LastPos;
+        private Quaternion m_LastRot;
+        private Vector3 m_LastScale;
+
         private void Update()
         {
-            if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled)
+            if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null)
+                return;
+
+            bool dirty = false;
+            if (m_CachedMask.Shape.Version != m_LastMaskVersion)
+            {
+                m_LastMaskVersion = m_CachedMask.Shape.Version;
+                dirty = true;
+            }
+
+            Transform t = transform;
+            if (t.position != m_LastPos || t.rotation != m_LastRot || t.lossyScale != m_LastScale)
+            {
+                m_LastPos = t.position;
+                m_LastRot = t.rotation;
+                m_LastScale = t.lossyScale;
+                dirty = true;
+            }
+
+            if (dirty)
             {
                 m_Graphic.SetMaterialDirty();
             }
@@ -134,7 +158,7 @@ namespace ProceduralShapes.Runtime
             Vector2 maskScale = maskShape.ShapeScale;
             Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y); 
             
-            m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
+            m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness + maskShape.m_EdgeSoftness));
             m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
             m_MaskMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
             
