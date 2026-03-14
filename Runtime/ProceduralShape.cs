@@ -465,10 +465,6 @@ namespace ProceduralShapes.Runtime
         protected override void OnValidate()
         {
             base.OnValidate();
-            if (MainFill != null && MainFill.Type == FillType.Solid)
-            {
-                color = MainFill.SolidColor;
-            }
             SetAllDirty();
         }
 
@@ -973,7 +969,7 @@ namespace ProceduralShapes.Runtime
 
             int startVert = vh.currentVertCount;
             UIVertex vert = UIVertex.simpleVert;
-            vert.color = color;
+            vert.color = fill.Type == FillType.Solid ? fill.SolidColor : Color.white;
             vert.normal = normalData;
             
             Vector4 finalTangent = tangentData;
@@ -1116,7 +1112,7 @@ namespace ProceduralShapes.Runtime
             Vector2 pivotOffset = GetGeometricCenterOffset();
 
             UIVertex vert = UIVertex.simpleVert;
-            vert.color = color; 
+            vert.color = fill.Type == FillType.Solid ? fill.SolidColor : Color.white; 
             
             vert.normal = normalData;
             
