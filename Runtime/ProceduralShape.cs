@@ -687,26 +687,38 @@ namespace ProceduralShapes.Runtime
                     return;
                 }
                 
-                // Исправленная логика матрицы:
-                // 1. Смещение от геометрического центра ребенка к его локальному (0,0)
+                // Calculate matrix: ChildLocal -> World -> MaskLocal -> MaskSDF
+                Matrix4x4 childLocalToWorld = rectTransform.localToWorldMatrix;
+                Matrix4x4 maskWorldToLocal = maskShape.rectTransform.worldToLocalMatrix;
+                
+                // Mask Local -> Mask SDF
+                Vector2 maskSizeRaw = maskShape.rectTransform.rect.size;
+                Vector2 maskPivot = maskShape.rectTransform.pivot;
+                Vector2 maskPivotOffset = maskShape.GetGeometricCenterOffset();
+                
+                Vector3 maskRectCenterFromPivot = new Vector3((0.5f - maskPivot.x) * maskSizeRaw.x, (0.5f - maskPivot.y) * maskSizeRaw.y, 0f);
+                Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
+                
+                Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
+                Matrix4x4 maskRotateToSDF = Matrix4x4.Rotate(Quaternion.Euler(0, 0, -maskShape.ShapeRotation));
+                
+                // Final Unified Matrix (no more child center correction needed here, because we map directly from vertex pos)
+                Matrix4x4 localToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal * childLocalToWorld;
+
+                // Child vertices are already relative to the child's rect center in OnPopulateMesh.
+                // We need to offset the matrix to account for the fact that the shader input 'p' is child's local coord + child's center offset.
                 Vector2 childGeomCenterLocal = rectTransform.rect.center + GetGeometricCenterOffset();
-                Matrix4x4 mChildToGeom = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0));
+                Matrix4x4 childGeomToLocal = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0));
                 
-                // 2. Трансформация из локального пространства ребенка в мировое, затем в локальное маски
-                Matrix4x4 mChildToMaskLocal = maskShape.rectTransform.worldToLocalMatrix * rectTransform.localToWorldMatrix;
-                
-                // 3. Смещение от локального (0,0) маски к её геометрическому центру и ПОВОРОТ SDF маски
-                Vector2 maskGeomCenterLocal = maskShape.rectTransform.rect.center + maskShape.GetGeometricCenterOffset();
-                Matrix4x4 mMaskGeomToSDF = Matrix4x4.Rotate(Quaternion.Euler(0, 0, -maskShape.ShapeRotation)) * Matrix4x4.Translate(new Vector3(-maskGeomCenterLocal.x, -maskGeomCenterLocal.y, 0));
-                
-                Matrix4x4 finalMatrix = mMaskGeomToSDF * mChildToMaskLocal * mChildToGeom;
+                Matrix4x4 finalMatrix = localToMaskSDF * childGeomToLocal;
 
                 m_InstanceMaterial.SetVector(_MaskMatrixX, finalMatrix.GetRow(0));
                 m_InstanceMaterial.SetVector(_MaskMatrixY, finalMatrix.GetRow(1));
                 m_InstanceMaterial.SetVector(_MaskMatrixZ, finalMatrix.GetRow(2));
                 m_InstanceMaterial.SetVector(_MaskMatrixW, finalMatrix.GetRow(3));
                 
-                Vector2 maskSize = maskShape.rectTransform.rect.size * maskShape.ShapeScale;
+                Vector2 maskScale = maskShape.ShapeScale;
+                Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y);
                 
                 m_InstanceMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
                 m_InstanceMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
@@ -722,7 +734,8 @@ namespace ProceduralShapes.Runtime
                 m_InstanceMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, 0, 0));
                 
                 int activeMaskCount = 0;
-                CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, maskShape.rectTransform.worldToLocalMatrix, maskShape.GetGeometricCenterOffset());
+                Matrix4x4 worldToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal;
+                CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, worldToMaskSDF);
                 
                 m_InstanceMaterial.SetInt(_MaskBoolParams, activeMaskCount);
                 if (activeMaskCount > 0)
@@ -797,7 +810,7 @@ namespace ProceduralShapes.Runtime
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
         }
         
-        private void CollectMaskBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 maskWorldToLocal, Vector3 maskCenterOffset)
+        private void CollectMaskBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 worldToMaskSDF)
         {
             if (currentShape == null) return;
             
@@ -816,31 +829,33 @@ namespace ProceduralShapes.Runtime
                     else if (input.Operation == BooleanOperation.Subtraction) effectiveOp = BooleanOperation.Union;
                 }
 
-                AddMaskShapeToShader(other, effectiveOp, count, maskWorldToLocal, maskCenterOffset, input.Smoothness);
+                AddMaskShapeToShader(other, effectiveOp, count, worldToMaskSDF, input.Smoothness);
                 count++;
 
-                CollectMaskBooleanOps(other, input.Operation, ref count, maskWorldToLocal, maskCenterOffset);
+                CollectMaskBooleanOps(other, input.Operation, ref count, worldToMaskSDF);
             }
         }
 
-        private void AddMaskShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 maskWorldToLocal, Vector3 maskCenterOffset, float smoothness)
+        private void AddMaskShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 worldToMaskSDF, float smoothness)
         {
             RectTransform otherRect = shape.rectTransform;
-            Vector3 otherPivotOffset = shape.GetGeometricCenterOffset();
-            Vector3 otherCenterWorld = otherRect.TransformPoint((Vector3)otherRect.rect.center + otherPivotOffset);
             
-            Vector3 localPos = maskWorldToLocal.MultiplyPoint3x4(otherCenterWorld);
-            localPos -= maskCenterOffset;
+            Vector2 size = otherRect.rect.size;
+            Vector2 pivot = otherRect.pivot;
+            Vector2 pivotOffset = shape.GetGeometricCenterOffset();
             
-            float relativeRotation = otherRect.eulerAngles.z - m_CachedMask.Shape.transform.eulerAngles.z;
+            Vector3 localGeomCenter = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f) + (Vector3)pivotOffset;
+            Vector3 worldGeomCenter = otherRect.TransformPoint(localGeomCenter);
+            
+            Vector3 posInMaskSDF = worldToMaskSDF.MultiplyPoint3x4(worldGeomCenter);
+            
+            float maskWorldRot = m_CachedMask.Shape.transform.eulerAngles.z;
+            float otherWorldRot = otherRect.eulerAngles.z;
+            float relativeRotation = otherWorldRot - maskWorldRot - m_CachedMask.Shape.ShapeRotation + shape.ShapeRotation;
 
             m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
-            
-            if (shape.m_ShapeType == ShapeType.Rectangle) m_MaskShaderShapeParams[index] = shape.m_CornerRadius;
-            else if (shape.m_ShapeType == ShapeType.Polygon) m_MaskShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, 0, 0);
-            else if (shape.m_ShapeType == ShapeType.Star) m_MaskShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
-
-            m_MaskShaderTransform[index] = new Vector4(localPos.x, localPos.y, relativeRotation * Mathf.Deg2Rad, 0);
+            m_MaskShaderShapeParams[index] = shape.GetPackedShapeParams();
+            m_MaskShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
             
             Vector3 lossyScaleRatio = new Vector3(
                 otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x, 

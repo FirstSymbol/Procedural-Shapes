@@ -6,7 +6,7 @@ namespace ProceduralShapes.Runtime
     [ExecuteAlways]
     [RequireComponent(typeof(Graphic))]
     [AddComponentMenu("UI/Procedural Shapes/Soft Maskable Image")]
-    public class ProceduralSoftMaskable : MonoBehaviour, IMaterialModifier
+    public class ProceduralSoftMaskable : MonoBehaviour, IMaterialModifier, IMeshModifier
     {
         private Graphic m_Graphic;
         private ProceduralShapeMask m_CachedMask;
@@ -43,12 +43,17 @@ namespace ProceduralShapes.Runtime
         {
             m_Graphic = GetComponent<Graphic>();
             m_Graphic.SetMaterialDirty();
+            m_Graphic.SetVerticesDirty();
         }
 
         private void OnDisable()
         {
             if (m_MaskMaterial != null) DestroyImmediate(m_MaskMaterial);
-            m_Graphic.SetMaterialDirty();
+            if (m_Graphic != null)
+            {
+                m_Graphic.SetMaterialDirty();
+                m_Graphic.SetVerticesDirty();
+            }
         }
 
         private void Update()
@@ -58,6 +63,20 @@ namespace ProceduralShapes.Runtime
                 m_Graphic.SetMaterialDirty();
             }
         }
+
+        public void ModifyMesh(VertexHelper vh)
+        {
+            if (!isActiveAndEnabled) return;
+            UIVertex vert = new UIVertex();
+            for (int i = 0; i < vh.currentVertCount; i++)
+            {
+                vh.PopulateUIVertex(ref vert, i);
+                vert.uv1 = new Vector4(vert.position.x, vert.position.y, 0, 0); // Preserve pure local position
+                vh.SetUIVertex(vert, i);
+            }
+        }
+
+        public void ModifyMesh(Mesh mesh) { }
 
         public Material GetModifiedMaterial(Material baseMaterial)
         {
@@ -74,6 +93,7 @@ namespace ProceduralShapes.Runtime
                 m_MaskMaterial = new Material(Shader.Find("UI/ProceduralShapes/SoftMaskedImage"));
                 m_MaskMaterial.hideFlags = HideFlags.HideAndDontSave;
             }
+            m_MaskMaterial.CopyPropertiesFromMaterial(baseMaterial);
             m_MaskMaterial.shaderKeywords = baseMaterial.shaderKeywords;
 
             UpdateMaskData();
@@ -85,36 +105,38 @@ namespace ProceduralShapes.Runtime
         {
             ProceduralShape maskShape = m_CachedMask.Shape;
             RectTransform maskRT = maskShape.rectTransform;
+            RectTransform imageRT = m_Graphic.rectTransform;
             
-            // 1. Matrix: World -> Mask Local (Pivot) -> Mask SDF (Center)
-            Matrix4x4 worldToLocal = maskRT.worldToLocalMatrix;
+            // Calculate matrix: ImageLocal -> World -> MaskLocal -> MaskSDF
+            Matrix4x4 imageLocalToWorld = imageRT.localToWorldMatrix;
+            Matrix4x4 maskWorldToLocal = maskRT.worldToLocalMatrix;
             
-            Vector2 size = maskRT.rect.size;
-            Vector2 pivot = maskRT.pivot;
-            Vector2 pivotOffset = maskShape.GetGeometricCenterOffset();
+            // Mask Local -> Mask SDF involves shifting by pivot and applying negative rotation
+            Vector2 maskSizeRaw = maskRT.rect.size;
+            Vector2 maskPivot = maskRT.pivot;
+            Vector2 maskPivotOffset = maskShape.GetGeometricCenterOffset();
             
-            Vector3 rectCenterFromPivot = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f);
-            Vector3 totalCenterCorrection = rectCenterFromPivot + (Vector3)pivotOffset;
+            Vector3 maskRectCenterFromPivot = new Vector3((0.5f - maskPivot.x) * maskSizeRaw.x, (0.5f - maskPivot.y) * maskSizeRaw.y, 0f);
+            Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
             
-            Matrix4x4 centerCorrection = Matrix4x4.Translate(-totalCenterCorrection); 
-            Matrix4x4 finalMatrix = centerCorrection * worldToLocal;
+            Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
+            Matrix4x4 maskRotateToSDF = Matrix4x4.Rotate(Quaternion.Euler(0, 0, -maskShape.ShapeRotation));
+            
+            // Final Unified Matrix
+            Matrix4x4 localToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
 
-            m_MaskMaterial.SetVector(_MaskWorldToLocalX, finalMatrix.GetRow(0));
-            m_MaskMaterial.SetVector(_MaskWorldToLocalY, finalMatrix.GetRow(1));
-            m_MaskMaterial.SetVector(_MaskWorldToLocalZ, finalMatrix.GetRow(2));
-            m_MaskMaterial.SetVector(_MaskWorldToLocalW, finalMatrix.GetRow(3));
+            m_MaskMaterial.SetVector(_MaskWorldToLocalX, localToMaskSDF.GetRow(0));
+            m_MaskMaterial.SetVector(_MaskWorldToLocalY, localToMaskSDF.GetRow(1));
+            m_MaskMaterial.SetVector(_MaskWorldToLocalZ, localToMaskSDF.GetRow(2));
+            m_MaskMaterial.SetVector(_MaskWorldToLocalW, localToMaskSDF.GetRow(3));
 
             // 2. Base Mask Data
             Vector2 maskScale = maskShape.ShapeScale;
-            Vector2 maskSize = new Vector2(size.x * maskScale.x, size.y * maskScale.y); 
+            Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y); 
             
             m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
             m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
             m_MaskMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
-            
-            // Unified Rotation for Mask
-            float maskRot = (maskRT.eulerAngles.z + maskShape.ShapeRotation) * Mathf.Deg2Rad;
-            m_MaskMaterial.SetVector(_MaskTrans, new Vector4(0, 0, maskRot, 0));
             
             // 3. Fill Data
             Texture gradientTex = maskShape.mainTexture; 
@@ -129,7 +151,9 @@ namespace ProceduralShapes.Runtime
 
             // 4. Boolean Operations
             int activeCount = 0;
-            CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, finalMatrix);
+            // For booleans, we just need World -> MaskSDF
+            Matrix4x4 worldToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal;
+            CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, worldToMaskSDF);
             
             m_MaskMaterial.SetInt(_MaskBoolParams, activeCount);
             if (activeCount > 0)
@@ -141,7 +165,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 maskSDFMatrix)
+        private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 worldToMaskSDF)
         {
             if (currentShape == null) return;
             
@@ -160,14 +184,14 @@ namespace ProceduralShapes.Runtime
                     else if (input.Operation == BooleanOperation.Subtraction) effectiveOp = BooleanOperation.Union;
                 }
 
-                AddShapeToArrays(other, effectiveOp, count, maskSDFMatrix, input.Smoothness);
+                AddShapeToArrays(other, effectiveOp, count, worldToMaskSDF, input.Smoothness);
                 count++;
 
-                CollectBooleanOps(other, input.Operation, ref count, maskSDFMatrix);
+                CollectBooleanOps(other, input.Operation, ref count, worldToMaskSDF);
             }
         }
 
-        private void AddShapeToArrays(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 maskSDFMatrix, float smoothness)
+        private void AddShapeToArrays(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 worldToMaskSDF, float smoothness)
         {
             RectTransform otherRect = shape.rectTransform;
             
@@ -178,15 +202,17 @@ namespace ProceduralShapes.Runtime
             Vector3 localGeomCenter = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f) + (Vector3)pivotOffset;
             Vector3 worldGeomCenter = otherRect.TransformPoint(localGeomCenter);
             
-            Vector3 posInMaskSDF = maskSDFMatrix.MultiplyPoint3x4(worldGeomCenter);
+            // Position in Mask SDF Space
+            Vector3 posInMaskSDF = worldToMaskSDF.MultiplyPoint3x4(worldGeomCenter);
             
-            // Unified Rotation: Relative to Mask Transform
-            float relativeRotation = otherRect.eulerAngles.z - m_CachedMask.Shape.transform.eulerAngles.z + shape.ShapeRotation;
-            float totalRot = relativeRotation * Mathf.Deg2Rad;
+            // Relative rotation: Other World Rotation - Mask World Rotation - Mask Shape Rotation + Other Shape Rotation
+            float maskWorldRot = m_CachedMask.Shape.transform.eulerAngles.z;
+            float otherWorldRot = otherRect.eulerAngles.z;
+            float relativeRotation = otherWorldRot - maskWorldRot - m_CachedMask.Shape.ShapeRotation + shape.ShapeRotation;
 
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             m_ShaderShapeParams[index] = shape.GetPackedShapeParams();
-            m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, totalRot, 0);
+            m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
             
             Vector3 lossyScaleRatio = new Vector3(
                 otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x, 

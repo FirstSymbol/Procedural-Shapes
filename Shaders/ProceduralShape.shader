@@ -244,6 +244,8 @@
                             float2 bSize = _MaskBoolSize[j].xy;
                             float4 bParams = _MaskBoolShapeParams[j];
 
+                            // Boolean positions are now already correctly in the Mask SDF Space.
+                            // We only need to apply the relative geometric rotation.
                             float2 p3 = maskP - bTrans.xy; 
                             float rot3 = bTrans.z;
                             if (abs(rot3) > 0.0001) {

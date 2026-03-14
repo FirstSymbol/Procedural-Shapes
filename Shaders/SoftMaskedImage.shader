@@ -56,15 +56,18 @@
                 float4 vertex : POSITION;
                 float4 color : COLOR;
                 float2 texcoord : TEXCOORD0;
+                float4 texcoord1 : TEXCOORD1;
             };
 
             struct v2f {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
                 float2 texcoord : TEXCOORD0;
-                float4 worldPosition : TEXCOORD1;
+                float4 worldPos : TEXCOORD1;
+                float4 localPos : TEXCOORD2;
             };
 
+            // ... (keep uniform declarations intact) ...
             sampler2D _MainTex;
             fixed4 _Color;
             float4 _ClipRect;
@@ -92,10 +95,11 @@
 
             v2f vert (appdata_ui v) {
                 v2f o;
-                o.worldPosition = mul(unity_ObjectToWorld, v.vertex); 
-                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.worldPos = v.vertex; 
+                o.vertex = UnityObjectToClipPos(o.worldPos);
                 o.color = v.color * _Color;
                 o.texcoord = v.texcoord;
+                o.localPos = v.texcoord1;
                 return o;
             }
 
@@ -103,37 +107,19 @@
                 float4 color = tex2D(_MainTex, i.texcoord) * i.color;
                 
                 if (_MaskParams.x > 0.5) {
-                    float3 worldPos = i.worldPosition.xyz;
-                    float4x4 worldToMask = float4x4(
+                    float4x4 localToMaskSDF = float4x4(
                         _MaskWorldToLocalX,
                         _MaskWorldToLocalY,
                         _MaskWorldToLocalZ,
                         _MaskWorldToLocalW
                     );
                     
-                    float2 p = mul(worldToMask, float4(worldPos, 1.0)).xy;
+                    // Transform image local space (unbatched) to mask SDF space directly
+                    float2 maskP = mul(localToMaskSDF, float4(i.localPos.xy, 0.0, 1.0)).xy;
                     
                     float maskType = _MaskParams.y;
                     float maskSmooth = _MaskParams.z;
                     float maskFeather = _MaskParams.w;
-                    
-                    // Base Mask SDF
-                    float2 maskP = p;
-                    float maskRot = _MaskTrans.z; 
-                    if (abs(maskRot) > 0.0001) {
-                         float s = sin(-maskRot);
-                         float c = cos(-maskRot);
-                         maskP = float2(maskP.x * c - maskP.y * s, maskP.x * s + maskP.y * c);
-                    }
-                    
-                    if (maskType > 1.5) {
-                         float innerR = _MaskTrans.w;
-                         if (abs(innerR) > 0.0001) {
-                             float s2 = sin(-innerR);
-                             float c2 = cos(-innerR);
-                             maskP = float2(maskP.x * c2 - maskP.y * s2, maskP.x * s2 + maskP.y * c2);
-                         }
-                    }
                     
                     float d = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
                     d += _InternalPadding;
@@ -152,21 +138,14 @@
                             float2 boolSize = _MaskBoolSize[k].xy;
                             float4 boolShapeParams = _MaskBoolShapeParams[k];
 
-                            float2 p2 = p - boolTrans.xy;
+                            // Boolean positions are now already correctly in the Mask SDF Space.
+                            // We only need to apply the relative geometric rotation.
+                            float2 p2 = maskP - boolTrans.xy;
                             float rot = boolTrans.z;
                             if (abs(rot) > 0.0001) {
                                 float s = sin(-rot);
                                 float c = cos(-rot);
                                 p2 = float2(p2.x * c - p2.y * s, p2.x * s + p2.y * c);
-                            }
-                            
-                            if (boolType > 1.5) { 
-                                float innerRot = boolTrans.w;
-                                if (abs(innerRot) > 0.0001) {
-                                    float s2 = sin(-innerRot);
-                                    float c2 = cos(-innerRot);
-                                    p2 = float2(p2.x * c2 - p2.y * s2, p2.x * s2 + p2.y * c2);
-                                }
                             }
 
                             float d2 = GetBasicSDF(p2, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
@@ -192,7 +171,6 @@
                     float gradScale = _MaskFillParams.z;
                     float2 gradOffset = _MaskFillOffset.xy; 
 
-                    // FIX: Use rotated coordinates for gradient calculation
                     float2 gradP = maskP - (halfSize * gradOffset);
                     gradP /= max(gradScale, 0.001);
 
@@ -219,7 +197,7 @@
                 }
 
                 #ifdef UNITY_UI_CLIP_RECT
-                color.a *= UnityGet2DClipping(i.worldPosition.xy, _ClipRect);
+                color.a *= UnityGet2DClipping(i.worldPos.xy, _ClipRect);
                 #endif
 
                 #ifdef UNITY_UI_ALPHACLIP
