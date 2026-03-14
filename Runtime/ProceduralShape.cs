@@ -113,10 +113,6 @@ namespace ProceduralShapes.Runtime
         private RectTransform m_RectTransform;
         public new RectTransform rectTransform => m_RectTransform ? m_RectTransform : (m_RectTransform = GetComponent<RectTransform>());
 
-        private Matrix4x4 m_LastLocalToWorld = Matrix4x4.identity;
-        private Rect m_LastRect = Rect.zero;
-        private struct TransformState { public Vector3 pos; public Quaternion rot; public Vector3 scale; public Rect rect; }
-        private Dictionary<int, TransformState> m_TrackedStates = new Dictionary<int, TransformState>();
         private bool m_NeedUpdate = true;
 
         private const int MAX_OPS = 8;
@@ -188,7 +184,17 @@ namespace ProceduralShapes.Runtime
         }
 
         public new bool IsActive => gameObject.activeInHierarchy && enabled;
-        public override void SetAllDirty() { m_TextureDirty = true; m_NeedUpdate = true; base.SetVerticesDirty(); base.SetMaterialDirty(); }
+        [System.NonSerialized] private uint m_Version = 0;
+        public uint Version => m_Version;
+
+        public override void SetAllDirty() 
+        { 
+            m_TextureDirty = true; 
+            m_NeedUpdate = true; 
+            m_Version++;
+            base.SetVerticesDirty(); 
+            base.SetMaterialDirty(); 
+        }
 
         protected override void OnValidate()
         {
@@ -214,6 +220,7 @@ namespace ProceduralShapes.Runtime
         {
             base.OnRectTransformDimensionsChange();
             m_NeedUpdate = true;
+            m_Version++;
         }
 
         private void LateUpdate()
@@ -223,23 +230,12 @@ namespace ProceduralShapes.Runtime
 
         private void CheckForChanges()
         {
-            bool dirty = false;
+            bool dirty = m_NeedUpdate;
 
             if (transform.hasChanged)
             {
-                Matrix4x4 currentL2W = transform.localToWorldMatrix;
-                if (currentL2W != m_LastLocalToWorld)
-                {
-                    m_LastLocalToWorld = currentL2W;
-                    dirty = true;
-                }
-                
-                if (rectTransform.rect != m_LastRect)
-                {
-                    m_LastRect = rectTransform.rect;
-                    dirty = true;
-                }
-                
+                m_Version++;
+                dirty = true;
                 transform.hasChanged = false;
             }
 
@@ -255,13 +251,14 @@ namespace ProceduralShapes.Runtime
 
             if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled)
             {
-                if (CheckTransformDirty(m_CachedMask.transform, m_CachedMask.Shape.rectTransform)) dirty = true;
-                
                 if (m_CachedMask.Shape != null)
                 {
-                    foreach (var op in m_CachedMask.Shape.BooleanOperations)
+                    if (CheckDependencyDirty(m_CachedMask.Shape)) dirty = true;
+                    
+                    var maskOps = m_CachedMask.Shape.BooleanOperations;
+                    for (int i = 0; i < maskOps.Count; i++)
                     {
-                        if (op.SourceShape != null && CheckTransformDirty(op.SourceShape.transform, op.SourceShape.rectTransform))
+                        if (maskOps[i].SourceShape != null && CheckDependencyDirty(maskOps[i].SourceShape))
                             dirty = true;
                     }
                 }
@@ -269,50 +266,45 @@ namespace ProceduralShapes.Runtime
 
             if (BooleanOperations.Count > 0)
             {
-                foreach (var input in BooleanOperations)
+                for (int i = 0; i < BooleanOperations.Count; i++)
                 {
-                    if (input.SourceShape != null && input.SourceShape.isActiveAndEnabled)
+                    var other = BooleanOperations[i].SourceShape;
+                    if (other != null && other.isActiveAndEnabled)
                     {
-                        if (CheckTransformDirty(input.SourceShape.transform, input.SourceShape.rectTransform)) 
+                        if (CheckDependencyDirty(other)) 
                             dirty = true;
                     }
                 }
             }
 
-            if (dirty || m_NeedUpdate)
+            if (dirty)
             {
                 m_NeedUpdate = false;
-                SetMaterialDirty();
-                SetVerticesDirty(); 
+                base.SetMaterialDirty();
+                base.SetVerticesDirty(); 
             }
         }
 
-        private bool CheckTransformDirty(Transform t, RectTransform rt)
+        private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
+
+        private bool CheckDependencyDirty(ProceduralShape other)
         {
-            int id = t.GetInstanceID();
-            TransformState currentState = new TransformState
+            int id = other.GetInstanceID();
+            uint currentVer = other.Version;
+            
+            // Also check if the other shape's transform has changed (it might not have its own LateUpdate running yet or ever)
+            if (other.transform.hasChanged)
             {
-                pos = t.position,
-                rot = t.rotation,
-                scale = t.lossyScale,
-                rect = rt != null ? rt.rect : Rect.zero
-            };
-
-            if (!m_TrackedStates.TryGetValue(id, out TransformState lastState))
-            {
-                m_TrackedStates[id] = currentState;
-                return true;
+                // We don't clear other.transform.hasChanged here to avoid breaking its own update
+                // But we know it's dirty.
+                return true; 
             }
 
-            if (lastState.pos != currentState.pos || 
-                lastState.rot != currentState.rot || 
-                lastState.scale != currentState.scale ||
-                lastState.rect != currentState.rect)
+            if (!m_KnownDependencyVersions.TryGetValue(id, out uint lastVer) || lastVer != currentVer)
             {
-                m_TrackedStates[id] = currentState;
+                m_KnownDependencyVersions[id] = currentVer;
                 return true;
             }
-
             return false;
         }
 
