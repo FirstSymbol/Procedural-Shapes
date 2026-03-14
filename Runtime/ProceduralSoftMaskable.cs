@@ -140,14 +140,16 @@ namespace ProceduralShapes.Runtime
             
             // 3. Fill Data
             Texture gradientTex = maskShape.mainTexture; 
-            m_MaskMaterial.SetTexture(_MaskTex, gradientTex != null ? gradientTex : Texture2D.whiteTexture);
-            
+            m_MaskMaterial.SetTexture("_MaskTex", gradientTex != null ? gradientTex : Texture2D.whiteTexture);
+
             ShapeFill fill = maskShape.MainFill;
-            float texHeight = gradientTex != null ? gradientTex.height : 3;
-            float vCoord = 1.5f / texHeight;
-            
-            m_MaskMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, vCoord));
-            m_MaskMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, 0, 0));
+            int maskRowIndex = GradientAtlasManager.GetAtlasRow(fill);
+
+            float maskAlphaMult = maskShape.color.a;
+            if (fill.Type == FillType.Solid) maskAlphaMult *= fill.SolidColor.a;
+
+            m_MaskMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, (float)maskRowIndex));
+            m_MaskMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, maskAlphaMult, 0));
 
             // 4. Boolean Operations
             int activeCount = 0;

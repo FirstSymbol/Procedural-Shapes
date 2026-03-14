@@ -69,7 +69,7 @@
                 fixed4 color : COLOR;
                 float3 normal : NORMAL; 
                 float4 tangent : TANGENT;
-                float2 uv0 : TEXCOORD0;
+                float4 uv0 : TEXCOORD0;
                 float4 shapeParams : TEXCOORD1;
                 float4 baseData : TEXCOORD2;
                 float4 fillParams : TEXCOORD3;
@@ -113,7 +113,7 @@
                 o.color = v.color;
                 o.normal = v.normal;
                 o.tangent = v.tangent;
-                o.uv0 = v.texcoord0.xy;
+                o.uv0 = v.texcoord0;
                 o.shapeParams = v.texcoord1;
                 o.baseData = v.texcoord2;
                 o.fillParams = v.texcoord3;
@@ -121,7 +121,7 @@
             }
 
             fixed4 frag (v2f i) : SV_Target {
-                float2 p = i.uv0;
+                float2 p = i.uv0.xy;
                 float shapeType = floor(i.baseData.z);
                 float customSmoothing = frac(i.baseData.z) / 0.99 * 1000.0;
                 float effectType = i.baseData.w; 
@@ -278,28 +278,31 @@
                     float mFillType = _MaskFillParams.x;
                     float mGradAngle = _MaskFillParams.y;
                     float mGradScale = _MaskFillParams.z;
+                    float mRowIndex = _MaskFillParams.w;
                     float2 mGradOffset = _MaskFillOffset.xy;
-                    float mVCoord = _MaskFillParams.w;
+                    float mBaseAlpha = _MaskFillOffset.z;
 
                     float2 mGradP = maskP - (_MaskSize.xy * 0.5 * mGradOffset);
                     mGradP /= max(mGradScale, 0.001);
 
                     float mt = 0.5;
-                    if (mFillType == 1.0) { 
+                    if (mFillType > 0.5 && mFillType < 1.5) { // Linear
                         float rad = mGradAngle * 0.0174533;
                         float2 dir = float2(cos(rad), sin(rad));
                         mt = (dot(mGradP, dir) / max(abs(dir.x*_MaskSize.x*0.5)+abs(dir.y*_MaskSize.y*0.5), 0.001)) * 0.5 + 0.5;
-                    } else if (mFillType == 2.0) { 
+                    } else if (mFillType > 1.5 && mFillType < 2.5) { // Radial
                         mt = length(mGradP) / max(max(_MaskSize.x*0.5, _MaskSize.y*0.5), 0.001);
-                    } else if (mFillType == 3.0) { 
+                    } else if (mFillType > 2.5 && mFillType < 3.5) { // Angular
                         mt = frac((atan2(mGradP.y, mGradP.x) - mGradAngle * 0.0174533) / 6.28318 + 0.5);
                     }
                     
+                    float mVCoord = (mRowIndex * 3.0 + 1.5) / 512.0;
                     if (mFillType > 0.5) { 
                          maskFillAlpha = tex2D(_MaskTex, float2(saturate(mt), mVCoord)).a;
                     } else {
                          maskFillAlpha = tex2D(_MaskTex, float2(0.5, mVCoord)).a; 
                     }
+                    maskFillAlpha *= mBaseAlpha;
                 }
 
                 float spread = i.tangent.x;
@@ -308,6 +311,18 @@
                     float alignment = i.tangent.y;
                     float strokeOffset = (alignment == 0) ? -spread * 0.5 : ((alignment == 2) ? spread * 0.5 : 0);
                     d = abs(d - strokeOffset) - spread * 0.5;
+                    
+                    if (i.uv0.z > 0.001) {
+                        float dashLen = i.uv0.z;
+                        float spaceLen = i.uv0.w;
+                        float perimeter = 0;
+                        if (shapeType == 5.0) perimeter = p_rotated.x;
+                        else perimeter = (atan2(p_rotated.y, p_rotated.x) + 3.14159265) * length(p_rotated);
+                        
+                        float dashCycle = dashLen + spaceLen;
+                        float dashVal = frac(perimeter / dashCycle);
+                        if (dashVal > (dashLen / dashCycle)) discard;
+                    }
                 }
                 else if (effectType == 3.0) d += spread; 
 
@@ -315,14 +330,15 @@
                 if (effectType == 3.0) { 
                     float baseD = d - spread; 
                     mask = smoothstep(-blur, blur, d) * smoothstep(aa, -aa, baseD);
+                } else if (effectType == 5.0) {
+                    mask = 1.0; 
                 } else {
                     mask = smoothstep(blur, -blur, d);
                 }
 
                 if (mask <= 0.001) discard;
 
-                float rowIndex = fmod(i.fillParams.x, 100.0);
-                float texHeight = floor(i.fillParams.x / 100.0);
+                float rowIndex = floor(i.fillParams.x + 0.5);
                 float fillType = i.fillParams.y;
                 float gradAngle = i.fillParams.z;
                 float gradScale = i.fillParams.w;
@@ -338,19 +354,47 @@
                     gradP /= max(gradScale, 0.001);
 
                     float t = 0.5;
-                    if (fillType == 1.0) { 
+                    if (fillType > 0.5 && fillType < 1.5) { // Linear
                         float rad = gradAngle * 0.0174533;
                         float2 dir = float2(cos(rad), sin(rad));
                         t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
-                    } else if (fillType == 2.0) { 
+                    } else if (fillType > 1.5 && fillType < 2.5) { // Radial
                         t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
-                    } else if (fillType == 3.0) { 
+                    } else if (fillType > 2.5 && fillType < 3.5) { // Angular
                         t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
                     }
-                    colorSample = tex2D(_MainTex, float2(saturate(t), (rowIndex * 3.0 + 1.5) / texHeight));
+                    float vCoord = (rowIndex * 3.0 + 1.5) / 512.0;
+                    colorSample = tex2D(_MainTex, float2(saturate(t), vCoord));
                 }
 
                 float4 finalColor = colorSample * i.color;
+                
+                if (effectType == 5.0) {
+                    float distance = max(i.normal.z, 0.5);
+                    float hAlpha = i.tangent.x;
+                    float sAlpha = i.tangent.y;
+                    float bAngle = i.tangent.z;
+                    
+                    float2 bDir = float2(cos(bAngle), sin(bAngle));
+                    float d1 = GetBasicSDF(noiseP + bDir * distance, halfSize, shapeType, customSmoothing, i.shapeParams) + internalPadding;
+                    float d2 = GetBasicSDF(noiseP - bDir * distance, halfSize, shapeType, customSmoothing, i.shapeParams) + internalPadding;
+                    
+                    float diff = d1 - d2;
+                    float bVal = diff / (distance * 2.0); 
+                    
+                    float highlight = saturate(bVal) * hAlpha;
+                    float shadow = saturate(-bVal) * sAlpha;
+                    
+                    float baseMask = smoothstep(aa, -aa, d);
+                    if (baseMask <= 0.001) discard;
+                    
+                    float4 bColor = float4(1,1,1, highlight);
+                    if (shadow > highlight) bColor = float4(0,0,0, shadow);
+                    
+                    finalColor = bColor;
+                    mask = baseMask;
+                }
+                
                 finalColor.a *= mask;
                 finalColor.a *= maskFillAlpha; 
                 finalColor.rgb *= finalColor.a;
