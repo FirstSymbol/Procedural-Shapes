@@ -25,6 +25,7 @@ namespace ProceduralShapes.Runtime
         private static readonly int _MaskTex = Shader.PropertyToID("_MaskTex");
         private static readonly int _MaskFillParams = Shader.PropertyToID("_MaskFillParams");
         private static readonly int _MaskFillOffset = Shader.PropertyToID("_MaskFillOffset");
+        private static readonly int _InternalPadding = Shader.PropertyToID("_InternalPadding");
         
         private static readonly int _MaskBoolParams = Shader.PropertyToID("_MaskBoolParams");
         private static readonly int _MaskBoolOpType = Shader.PropertyToID("_MaskBoolOpType");
@@ -104,19 +105,16 @@ namespace ProceduralShapes.Runtime
             m_MaskMaterial.SetVector(_MaskWorldToLocalW, finalMatrix.GetRow(3));
 
             // 2. Base Mask Data
-            Vector2 maskSize = size * maskShape.ShapeScale; 
+            Vector2 maskScale = maskShape.ShapeScale;
+            Vector2 maskSize = new Vector2(size.x * maskScale.x, size.y * maskScale.y); 
             
-            Vector4 maskShapeParams = Vector4.zero;
-            if (maskShape.m_ShapeType == ShapeType.Rectangle) maskShapeParams = maskShape.m_CornerRadius;
-            else if (maskShape.m_ShapeType == ShapeType.Polygon) maskShapeParams = new Vector4(maskShape.m_PolygonSides, maskShape.m_PolygonRounding, 0, 0);
-            else if (maskShape.m_ShapeType == ShapeType.Star) maskShapeParams = new Vector4(maskShape.m_StarPoints, maskShape.m_StarRatio, maskShape.m_StarRoundingOuter, maskShape.m_StarRoundingInner);
-
             m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
             m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
-            m_MaskMaterial.SetVector(_MaskShape, maskShapeParams);
+            m_MaskMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
             
-            // FIX: Removed usage of ShapeRotation. Passing 0.
-            m_MaskMaterial.SetVector(_MaskTrans, new Vector4(0, 0, 0, 0));
+            // Unified Rotation for Mask
+            float maskRot = (maskRT.eulerAngles.z + maskShape.ShapeRotation) * Mathf.Deg2Rad;
+            m_MaskMaterial.SetVector(_MaskTrans, new Vector4(0, 0, maskRot, 0));
             
             // 3. Fill Data
             Texture gradientTex = maskShape.mainTexture; 
@@ -182,17 +180,12 @@ namespace ProceduralShapes.Runtime
             
             Vector3 posInMaskSDF = maskSDFMatrix.MultiplyPoint3x4(worldGeomCenter);
             
-            // Unified Rotation: Relative to Mask Transform only
-            float relativeRotation = otherRect.eulerAngles.z - m_CachedMask.Shape.transform.eulerAngles.z;
-            // FIX: Removed shape.ShapeRotation
+            // Unified Rotation: Relative to Mask Transform
+            float relativeRotation = otherRect.eulerAngles.z - m_CachedMask.Shape.transform.eulerAngles.z + shape.ShapeRotation;
             float totalRot = relativeRotation * Mathf.Deg2Rad;
 
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
-            
-            if (shape.m_ShapeType == ShapeType.Rectangle) m_ShaderShapeParams[index] = shape.m_CornerRadius;
-            else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, 0, 0);
-            else if (shape.m_ShapeType == ShapeType.Star) m_ShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
-
+            m_ShaderShapeParams[index] = shape.GetPackedShapeParams();
             m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, totalRot, 0);
             
             Vector3 lossyScaleRatio = new Vector3(
@@ -200,8 +193,8 @@ namespace ProceduralShapes.Runtime
                 otherRect.lossyScale.y / m_CachedMask.Shape.transform.lossyScale.y, 
                 1f);
             
-            float finalW = otherRect.rect.width * lossyScaleRatio.x * shape.ShapeScale;
-            float finalH = otherRect.rect.height * lossyScaleRatio.y * shape.ShapeScale;
+            float finalW = otherRect.rect.width * lossyScaleRatio.x * shape.ShapeScale.x;
+            float finalH = otherRect.rect.height * lossyScaleRatio.y * shape.ShapeScale.y;
 
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
         }

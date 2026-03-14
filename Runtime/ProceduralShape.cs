@@ -7,16 +7,214 @@ namespace ProceduralShapes.Runtime
     [ExecuteAlways]
     [RequireComponent(typeof(CanvasRenderer))]
     [AddComponentMenu("UI/Procedural Shapes/Shape")]
-    public class ProceduralShape : MaskableGraphic
+    public class ProceduralShape : MaskableGraphic, ICanvasRaycastFilter, ISerializationCallbackReceiver
     {
         [Tooltip("Если включено, фигура не будет отрисовываться, но может использоваться как Cutter для других фигур.")]
         [SerializeField] private bool m_DisableRendering = false;
+
+        // ... (другие поля)
+
+        #region Raycast Filtering (SDF on CPU)
+        public bool IsRaycastLocationValid(Vector2 screenPoint, Camera eventCamera)
+        {
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rectTransform, screenPoint, eventCamera, out Vector2 localPoint))
+                return false;
+
+            Vector2 pivotOffset = GetGeometricCenterOffset();
+            Vector2 p = localPoint - (rectTransform.rect.center + pivotOffset);
+
+            if (Mathf.Abs(m_ShapeRotation) > 0.001f)
+            {
+                float angle = -m_ShapeRotation * Mathf.Deg2Rad;
+                float s = Mathf.Sin(angle);
+                float c = Mathf.Cos(angle);
+                p = new Vector2(p.x * c - p.y * s, p.x * s + p.y * c);
+            }
+
+            Vector2 halfSize = rectTransform.rect.size * 0.5f * m_ShapeScale2D;
+            float d = GetSDF_CPU(p, halfSize, m_ShapeType, m_CornerSmoothing, GetPackedShapeParams());
+            d += m_InternalPadding;
+
+            if (BooleanOperations.Count > 0)
+            {
+                foreach (var op in BooleanOperations)
+                {
+                    if (op.SourceShape == null || !op.SourceShape.isActiveAndEnabled || op.Operation == BooleanOperation.None) continue;
+                    
+                    Vector3 worldPos = rectTransform.TransformPoint(localPoint);
+                    Vector2 otherLocal = op.SourceShape.rectTransform.InverseTransformPoint(worldPos);
+                    Vector2 otherPivot = op.SourceShape.GetGeometricCenterOffset();
+                    Vector2 p2 = otherLocal - (op.SourceShape.rectTransform.rect.center + otherPivot);
+                    
+                    float d2 = GetSDF_CPU(p2, op.SourceShape.rectTransform.rect.size * 0.5f * op.SourceShape.ShapeScale, 
+                                         op.SourceShape.m_ShapeType, op.SourceShape.m_CornerSmoothing, op.SourceShape.GetPackedShapeParams());
+                    
+                    if (op.Operation == BooleanOperation.Union) d = Mathf.Min(d, d2);
+                    else if (op.Operation == BooleanOperation.Subtraction) d = Mathf.Max(d, -d2);
+                    else if (op.Operation == BooleanOperation.Intersection) d = Mathf.Max(d, d2);
+                }
+            }
+
+            return d <= m_EdgeSoftness; 
+        }
+
+        private float GetSDF_CPU(Vector2 p, Vector2 halfSize, ShapeType type, float smoothing, Vector4 params4)
+        {
+            float minHalfSize = Mathf.Min(halfSize.x, halfSize.y);
+            switch (type)
+            {
+                case ShapeType.Rectangle:
+                    float r = 0;
+                    if (p.x < 0 && p.y > 0) r = params4.x;
+                    else if (p.x >= 0 && p.y > 0) r = params4.y;
+                    else if (p.x >= 0 && p.y <= 0) r = params4.z;
+                    else if (p.x < 0 && p.y <= 0) r = params4.w;
+                    r = Mathf.Min(r, minHalfSize);
+                    Vector2 q = new Vector2(Mathf.Abs(p.x), Mathf.Abs(p.y)) - halfSize + new Vector2(r, r);
+                    return Mathf.Min(Mathf.Max(q.x, q.y), 0.0f) + Vector2.Max(q, Vector2.zero).magnitude - r;
+
+                case ShapeType.Ellipse:
+                    return (new Vector2(p.x / halfSize.x, p.y / halfSize.y).magnitude - 1.0f) * minHalfSize;
+
+                case ShapeType.Polygon:
+                {
+                    float n = Mathf.Max(3.0f, params4.x);
+                    float an = Mathf.PI / n;
+                    float a = Mathf.Atan2(p.x, p.y);
+                    float bn = Mathf.Floor(a / (2.0f * an));
+                    float f = a - (bn + 0.5f) * 2.0f * an;
+                    Vector2 p_sec = new Vector2(p.magnitude * Mathf.Abs(Mathf.Sin(f)), p.magnitude * Mathf.Cos(f));
+                    float rounding = params4.y * minHalfSize * 0.5f;
+                    float rOuter = minHalfSize - rounding;
+                    Vector2 closest = new Vector2(Mathf.Clamp(p_sec.x, -rOuter * Mathf.Sin(an), rOuter * Mathf.Sin(an)), rOuter * Mathf.Cos(an));
+                    return (p_sec - closest).magnitude * Mathf.Sign(p_sec.y - closest.y) - rounding;
+                }
+
+                case ShapeType.Star:
+                {
+                    float n = Mathf.Max(3.0f, params4.x);
+                    float maxR = minHalfSize;
+                    
+                    float ro = params4.z * maxR * 0.5f;
+                    float rOut = Mathf.Max(maxR - ro, 0.001f);
+                    float rIn  = Mathf.Max(params4.y * maxR - ro, 0.001f);
+                    
+                    float an = Mathf.PI / n;
+                    float a = Mathf.Atan2(p.x, p.y);
+                    float f = Mathf.Abs(a) % (2.0f * an);
+                    if (f > an) f = 2.0f * an - f;
+                    
+                    Vector2 q0 = p.magnitude * new Vector2(Mathf.Sin(f), Mathf.Cos(f));
+                    Vector2 q1 = p.magnitude * new Vector2(Mathf.Sin(2.0f * an - f), Mathf.Cos(2.0f * an - f));
+                    
+                    Vector2 p1 = new Vector2(0.0f, rOut);
+                    Vector2 p2 = new Vector2(rIn * Mathf.Sin(an), rIn * Mathf.Cos(an));
+                    
+                    Vector2 ba = p2 - p1;
+                    float ba2 = Mathf.Max(Vector2.Dot(ba, ba), 0.00001f);
+                    
+                    Vector2 pa0 = q0 - p1;
+                    float h0 = Mathf.Clamp01(Vector2.Dot(pa0, ba) / ba2);
+                    Vector2 d0 = pa0 - ba * h0;
+                    float s0 = (pa0.y * ba.x - pa0.x * ba.y >= 0.0f) ? 1.0f : -1.0f;
+                    float dist0 = d0.magnitude * s0;
+                    
+                    Vector2 pa1 = q1 - p1;
+                    float h1 = Mathf.Clamp01(Vector2.Dot(pa1, ba) / ba2);
+                    Vector2 d1 = pa1 - ba * h1;
+                    float s1 = (pa1.y * ba.x - pa1.x * ba.y >= 0.0f) ? 1.0f : -1.0f;
+                    float dist1 = d1.magnitude * s1;
+                    
+                    float rInner = params4.w * maxR;
+                    float finalDist = dist0;
+                    if (rInner > 0.001f)
+                    {
+                        float h = Mathf.Clamp01(0.5f + 0.5f * (dist1 - dist0) / rInner);
+                        finalDist = Mathf.Lerp(dist1, dist0, h) - rInner * h * (1.0f - h);
+                    }
+                    
+                    return finalDist - ro;
+                }
+
+                case ShapeType.Capsule:
+                    float cr = params4.x * minHalfSize;
+                    Vector2 ch = Vector2.Max(halfSize - new Vector2(cr, cr), Vector2.zero);
+                    Vector2 cq = new Vector2(Mathf.Abs(p.x), Mathf.Abs(p.y)) - ch;
+                    return Vector2.Max(cq, Vector2.zero).magnitude + Mathf.Min(Mathf.Max(cq.x, cq.y), 0.0f) - cr;
+
+                case ShapeType.Line:
+                {
+                    Vector2 pa = p - new Vector2(params4.x, params4.y);
+                    Vector2 ba = new Vector2(params4.z, params4.w) - new Vector2(params4.x, params4.y);
+                    float h = Mathf.Clamp01(Vector2.Dot(pa, ba) / Vector2.Dot(ba, ba));
+                    return (pa - ba * h).magnitude - smoothing * 0.5f;
+                }
+
+                case ShapeType.Ring:
+                {
+                    float innerR = params4.x * minHalfSize;
+                    float thickness = (minHalfSize - innerR) * 0.5f;
+                    float midR = (minHalfSize + innerR) * 0.5f;
+                    float d = Mathf.Abs(p.magnitude - midR) - thickness;
+                    if (Mathf.Abs(params4.z - params4.y) < Mathf.PI * 2.0f)
+                    {
+                        float ang = Mathf.Atan2(p.x, p.y);
+                        float da = frac((ang - params4.y) / (Mathf.PI * 2.0f));
+                        float targetDa = frac((params4.z - params4.y) / (Mathf.PI * 2.0f));
+                        if (da > targetDa)
+                        {
+                            Vector2 p1 = new Vector2(Mathf.Sin(params4.y), Mathf.Cos(params4.y)) * midR;
+                            Vector2 p2 = new Vector2(Mathf.Sin(params4.z), Mathf.Cos(params4.z)) * midR;
+                            d = Mathf.Max(d, Mathf.Min((p - p1).magnitude, (p - p2).magnitude) - thickness);
+                        }
+                    }
+                    return d;
+                }
+
+                default:
+                    return 100000.0f;
+            }
+        }
+
+        private float frac(float x) => x - Mathf.Floor(x);
+        #endregion
+
+        private void OnDrawGizmos()
+        {
+            if (m_DisableRendering && !Application.isPlaying)
+            {
+                Gizmos.matrix = transform.localToWorldMatrix;
+                Gizmos.color = new Color(1f, 0f, 0f, 0.4f);
+                
+                // Рисуем упрощенный контур для визуализации в Scene View
+                Rect r = rectTransform.rect;
+                Gizmos.DrawWireCube(r.center + GetGeometricCenterOffset(), r.size * m_ShapeScale2D);
+            }
+        }
 
         [Header("Shape Definition")]
         public ShapeType m_ShapeType = ShapeType.Rectangle;
         
         [Tooltip("Uniform scale factor for the shape inside the RectTransform bounds.")]
-        [SerializeField] private float m_ShapeScale = 1.0f;
+        [SerializeField, HideInInspector] private float m_ShapeScale = 1.0f;
+
+        [SerializeField] private Vector2 m_ShapeScale2D = new Vector2(1f, 1f);
+        [SerializeField] private bool m_LinkScale = true;
+        [SerializeField, HideInInspector] private bool m_ScaleMigrated = false;
+
+        public void OnBeforeSerialize() { }
+
+        public void OnAfterDeserialize()
+        {
+            if (!m_ScaleMigrated)
+            {
+                m_ShapeScale2D = new Vector2(m_ShapeScale, m_ShapeScale);
+                m_ScaleMigrated = true;
+            }
+        }
+
+        [Tooltip("Rotation of the shape geometry in degrees.")]
+        [SerializeField] private float m_ShapeRotation = 0f;
         
         [Tooltip("Pivot of the shape geometry relative to the RectTransform center. (0.5, 0.5) is centered.")]
         [SerializeField] private Vector2 m_ShapePivot = new Vector2(0.5f, 0.5f);
@@ -32,9 +230,30 @@ namespace ProceduralShapes.Runtime
         [Range(0f, 1f)] public float m_StarRoundingOuter = 0f;
         [Range(0f, 1f)] public float m_StarRoundingInner = 0f;
 
+        // Capsule
+        [Range(0f, 1f)] public float m_CapsuleRounding = 1f;
+
+        // Line
+        public Vector2 m_LineStart = new Vector2(-50, 0);
+        public Vector2 m_LineEnd = new Vector2(50, 0);
+        [Range(0.1f, 100f)] public float m_LineWidth = 5f;
+
+        // Ring
+        [Range(0f, 1f)] public float m_RingInnerRadius = 0.5f;
+        [Range(0f, 360f)] public float m_RingStartAngle = 0f;
+        [Range(0f, 360f)] public float m_RingEndAngle = 360f;
+
+        [Range(0f, 100f)]
+        [Tooltip("Внутренний отступ (Inset). Положительные значения сужают фигуру, отрицательные — расширяют.")]
+        public float m_InternalPadding = 0f;
+
         [Range(0f, 10f)] 
         [Tooltip("Сглаживание краев (антиалиасинг). Значение около 1.0 обычно оптимально.")]
         public float m_EdgeSoftness = 1.0f;
+
+        [Header("Edge Noise")]
+        [Range(0f, 50f)] public float m_EdgeNoiseAmount = 0f;
+        [Range(0.01f, 1f)] public float m_EdgeNoiseScale = 0.1f;
 
         [Header("Boolean Operations")]
         public List<BooleanInput> BooleanOperations = new List<BooleanInput>();
@@ -45,11 +264,98 @@ namespace ProceduralShapes.Runtime
         [SerializeReference] 
         public List<ProceduralEffect> Effects = new List<ProceduralEffect>();
 
-        private Texture2D m_GradientTexture;
+        private int m_MainFillAtlasIndex = -1;
+        private List<int> m_EffectAtlasIndices = new List<int>();
         private bool m_TextureDirty = true;
         private Material m_InstanceMaterial; 
         private ProceduralShapeMask m_CachedMask;
         
+        private static Material s_SharedMaterial;
+        private static Material sharedMaterial 
+        {
+            get 
+            {
+                if (s_SharedMaterial == null) s_SharedMaterial = new Material(Shader.Find("UI/ProceduralShapes/Shape"));
+                return s_SharedMaterial;
+            }
+        }
+
+        #region Gradient Atlas System
+        private static Texture2D s_AtlasTexture;
+        private static List<GradientDataEntry> s_AtlasRegistry = new List<GradientDataEntry>();
+        private const int ATLAS_WIDTH = 256;
+        private const int ATLAS_HEIGHT = 512;
+
+        private struct GradientDataEntry 
+        { 
+            public FillType type; 
+            public Color color; 
+            public string gradientHash; // Content-based hash
+            public int rowIndex;
+        }
+
+        private static int GetAtlasRow(ShapeFill fill)
+        {
+            if (s_AtlasTexture == null)
+            {
+                s_AtlasTexture = new Texture2D(ATLAS_WIDTH, ATLAS_HEIGHT, TextureFormat.RGBA32, false)
+                {
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear,
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                Color[] clear = new Color[ATLAS_WIDTH * ATLAS_HEIGHT];
+                for(int i=0; i<clear.Length; i++) clear[i] = Color.clear;
+                // Row 0 is always white for Solid fill batching
+                for(int x=0; x<ATLAS_WIDTH; x++) clear[x] = clear[ATLAS_WIDTH + x] = clear[ATLAS_WIDTH*2 + x] = Color.white;
+                
+                s_AtlasTexture.SetPixels(clear);
+                s_AtlasTexture.Apply();
+            }
+
+            if (fill.Type == FillType.Solid) return 0;
+
+            string currentHash = GetGradientHash(fill.Gradient);
+            for (int i = 0; i < s_AtlasRegistry.Count; i++)
+            {
+                var data = s_AtlasRegistry[i];
+                if (data.type == fill.Type && data.gradientHash == currentHash)
+                    return data.rowIndex;
+            }
+
+            int newIndex = (s_AtlasRegistry.Count + 1); // Row 0 is reserved
+            if (newIndex * 3 + 3 > ATLAS_HEIGHT) return 0; // Out of space
+
+            s_AtlasRegistry.Add(new GradientDataEntry { type = fill.Type, gradientHash = currentHash, rowIndex = newIndex });
+            BakeToAtlas(newIndex, fill);
+            return newIndex;
+        }
+
+        private static string GetGradientHash(Gradient g)
+        {
+            if (g == null) return "null";
+            var ck = g.colorKeys;
+            var ak = g.alphaKeys;
+            string hash = $"{ck.Length}_{ak.Length}";
+            for (int i = 0; i < ck.Length; i++) hash += $"_{ck[i].color.GetHashCode()}_{ck[i].time}";
+            for (int i = 0; i < ak.Length; i++) hash += $"_{ak[i].alpha}_{ak[i].time}";
+            return hash;
+        }
+
+        private static void BakeToAtlas(int index, ShapeFill fill)
+        {
+            int rowStart = index * 3;
+            Color[] pixels = new Color[ATLAS_WIDTH * 3];
+            for (int x = 0; x < ATLAS_WIDTH; x++)
+            {
+                Color c = fill.Gradient.Evaluate(x / (float)(ATLAS_WIDTH - 1));
+                pixels[x] = pixels[ATLAS_WIDTH + x] = pixels[ATLAS_WIDTH * 2 + x] = c;
+            }
+            s_AtlasTexture.SetPixels(0, rowStart, ATLAS_WIDTH, 3, pixels);
+            s_AtlasTexture.Apply();
+        }
+        #endregion
+
         private RectTransform m_RectTransform;
         public new RectTransform rectTransform => m_RectTransform ? m_RectTransform : (m_RectTransform = GetComponent<RectTransform>());
 
@@ -65,6 +371,7 @@ namespace ProceduralShapes.Runtime
         private static readonly int _BoolData_Transform = Shader.PropertyToID("_BoolData_Transform");
         private static readonly int _BoolData_Size = Shader.PropertyToID("_BoolData_Size");
         private static readonly int _AntiAliasing = Shader.PropertyToID("_AntiAliasing");
+        private static readonly int _InternalPadding = Shader.PropertyToID("_InternalPadding");
         
         private static readonly int _MaskParams = Shader.PropertyToID("_MaskParams");
         private static readonly int _MaskMatrixX = Shader.PropertyToID("_MaskMatrixX");
@@ -98,7 +405,7 @@ namespace ProceduralShapes.Runtime
 
         private static readonly Vector3[] s_Corners = new Vector3[4];
 
-        public override Texture mainTexture => m_GradientTexture != null ? m_GradientTexture : s_WhiteTexture;
+        public override Texture mainTexture => s_AtlasTexture != null ? s_AtlasTexture : s_WhiteTexture;
 
         public bool DisableRendering
         {
@@ -106,16 +413,34 @@ namespace ProceduralShapes.Runtime
             set { if (m_DisableRendering != value) { m_DisableRendering = value; SetAllDirty(); } }
         }
 
-        public float ShapeScale
+        public Vector2 ShapeScale
         {
-            get => m_ShapeScale;
-            set { if (Mathf.Abs(m_ShapeScale - value) > 0.0001f) { m_ShapeScale = value; SetAllDirty(); } }
+            get => m_ShapeScale2D;
+            set { if (m_ShapeScale2D != value) { m_ShapeScale2D = value; SetAllDirty(); } }
+        }
+
+        public bool LinkScale
+        {
+            get => m_LinkScale;
+            set { if (m_LinkScale != value) { m_LinkScale = value; SetAllDirty(); } }
+        }
+
+        public float ShapeRotation
+        {
+            get => m_ShapeRotation;
+            set { if (Mathf.Abs(m_ShapeRotation - value) > 0.0001f) { m_ShapeRotation = value; SetAllDirty(); } }
         }
         
         public Vector2 ShapePivot
         {
             get => m_ShapePivot;
             set { if (m_ShapePivot != value) { m_ShapePivot = value; SetAllDirty(); } }
+        }
+
+        public float InternalPadding
+        {
+            get => m_InternalPadding;
+            set { if (Mathf.Abs(m_InternalPadding - value) > 0.0001f) { m_InternalPadding = value; SetAllDirty(); } }
         }
 
         public Vector2 GetGeometricCenterOffset()
@@ -135,7 +460,17 @@ namespace ProceduralShapes.Runtime
         }
 
         public bool IsActive => gameObject.activeInHierarchy && enabled;
-        public void SetAllDirty() { m_TextureDirty = true; m_NeedUpdate = true; SetVerticesDirty(); SetMaterialDirty(); }
+        public override void SetAllDirty() { m_TextureDirty = true; m_NeedUpdate = true; base.SetVerticesDirty(); base.SetMaterialDirty(); }
+
+        protected override void OnValidate()
+        {
+            base.OnValidate();
+            if (MainFill != null && MainFill.Type == FillType.Solid)
+            {
+                color = MainFill.SolidColor;
+            }
+            SetAllDirty();
+        }
 
         protected override void OnEnable() 
         { 
@@ -260,34 +595,18 @@ namespace ProceduralShapes.Runtime
         protected override void OnDestroy() 
         { 
             base.OnDestroy(); 
-            if (m_GradientTexture != null) DestroyImmediate(m_GradientTexture); 
             if (m_InstanceMaterial != null) DestroyImmediate(m_InstanceMaterial);
         }
 
         private void RebuildGradientTexture()
         {
-            if (!m_TextureDirty && m_GradientTexture != null) return;
+            if (!m_TextureDirty) return;
 
-            int layers = 1 + Effects.Count;
-            int rowCount = layers * 3; 
-            
-            if (m_GradientTexture == null || m_GradientTexture.height != rowCount)
-            {
-                if (m_GradientTexture != null) DestroyImmediate(m_GradientTexture);
-                m_GradientTexture = new Texture2D(256, rowCount, TextureFormat.RGBA32, false)
-                {
-                    wrapMode = TextureWrapMode.Clamp,
-                    filterMode = FilterMode.Bilinear, 
-                    hideFlags = HideFlags.HideAndDontSave
-                };
-            }
+            m_MainFillAtlasIndex = GetAtlasRow(MainFill);
+            m_EffectAtlasIndices.Clear();
+            for (int i = 0; i < Effects.Count; i++) 
+                m_EffectAtlasIndices.Add(GetAtlasRow(Effects[i].Fill));
 
-            Color[] pixels = new Color[256 * rowCount];
-            BakeFillRow(pixels, 0, MainFill);
-            for (int i = 0; i < Effects.Count; i++) BakeFillRow(pixels, i + 1, Effects[i].Fill);
-
-            m_GradientTexture.SetPixels(pixels);
-            m_GradientTexture.Apply();
             m_TextureDirty = false;
         }
 
@@ -305,6 +624,11 @@ namespace ProceduralShapes.Runtime
 
         public override Material GetModifiedMaterial(Material baseMaterial)
         {
+            if (BooleanOperations.Count == 0 && m_CachedMask == null && MainFill.Type != FillType.Pattern)
+            {
+                return base.GetModifiedMaterial(baseMaterial);
+            }
+
             Material mat = base.GetModifiedMaterial(baseMaterial);
 
             if (m_InstanceMaterial == null || m_InstanceMaterial.shader != mat.shader)
@@ -315,6 +639,11 @@ namespace ProceduralShapes.Runtime
             
             m_InstanceMaterial.CopyPropertiesFromMaterial(mat);
             m_InstanceMaterial.shaderKeywords = mat.shaderKeywords;
+
+            if (MainFill.Type == FillType.Pattern && MainFill.PatternTexture != null)
+            {
+                m_InstanceMaterial.SetTexture("_PatternTex", MainFill.PatternTexture);
+            }
             
             UpdateBooleanProperties();
             UpdateMask(); 
@@ -330,6 +659,7 @@ namespace ProceduralShapes.Runtime
 
             CollectBooleanOps(this, BooleanOperation.Union, ref activeCount, worldToLocal, selfCenterOffset);
 
+            m_InstanceMaterial.SetFloat(_InternalPadding, m_InternalPadding);
             m_InstanceMaterial.SetInt(_BoolParams1, activeCount); 
             if (activeCount > 0)
             {
@@ -357,15 +687,19 @@ namespace ProceduralShapes.Runtime
                     return;
                 }
                 
+                // Исправленная логика матрицы:
+                // 1. Смещение от геометрического центра ребенка к его локальному (0,0)
                 Vector2 childGeomCenterLocal = rectTransform.rect.center + GetGeometricCenterOffset();
-                Matrix4x4 m1 = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0)); 
-                Matrix4x4 m2 = rectTransform.localToWorldMatrix; 
-                Matrix4x4 m3 = maskShape.rectTransform.worldToLocalMatrix; 
+                Matrix4x4 mChildToGeom = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0));
                 
+                // 2. Трансформация из локального пространства ребенка в мировое, затем в локальное маски
+                Matrix4x4 mChildToMaskLocal = maskShape.rectTransform.worldToLocalMatrix * rectTransform.localToWorldMatrix;
+                
+                // 3. Смещение от локального (0,0) маски к её геометрическому центру и ПОВОРОТ SDF маски
                 Vector2 maskGeomCenterLocal = maskShape.rectTransform.rect.center + maskShape.GetGeometricCenterOffset();
-                Matrix4x4 m4 = Matrix4x4.Translate(new Vector3(-maskGeomCenterLocal.x, -maskGeomCenterLocal.y, 0)); 
+                Matrix4x4 mMaskGeomToSDF = Matrix4x4.Rotate(Quaternion.Euler(0, 0, -maskShape.ShapeRotation)) * Matrix4x4.Translate(new Vector3(-maskGeomCenterLocal.x, -maskGeomCenterLocal.y, 0));
                 
-                Matrix4x4 finalMatrix = m4 * m3 * m2 * m1;
+                Matrix4x4 finalMatrix = mMaskGeomToSDF * mChildToMaskLocal * mChildToGeom;
 
                 m_InstanceMaterial.SetVector(_MaskMatrixX, finalMatrix.GetRow(0));
                 m_InstanceMaterial.SetVector(_MaskMatrixY, finalMatrix.GetRow(1));
@@ -374,34 +708,21 @@ namespace ProceduralShapes.Runtime
                 
                 Vector2 maskSize = maskShape.rectTransform.rect.size * maskShape.ShapeScale;
                 
-                Vector4 maskShapeParams = Vector4.zero;
-                if (maskShape.m_ShapeType == ShapeType.Rectangle) maskShapeParams = maskShape.m_CornerRadius;
-                else if (maskShape.m_ShapeType == ShapeType.Polygon) maskShapeParams = new Vector4(maskShape.m_PolygonSides, maskShape.m_PolygonRounding, 0, 0);
-                else if (maskShape.m_ShapeType == ShapeType.Star) maskShapeParams = new Vector4(maskShape.m_StarPoints, maskShape.m_StarRatio, maskShape.m_StarRoundingOuter, maskShape.m_StarRoundingInner);
-
                 m_InstanceMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness));
                 m_InstanceMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
-                m_InstanceMaterial.SetVector(_MaskShape, maskShapeParams);
+                m_InstanceMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
                 
                 Texture gradientTex = maskShape.mainTexture;
                 m_InstanceMaterial.SetTexture(_MaskTex, gradientTex != null ? gradientTex : Texture2D.whiteTexture);
                 
                 ShapeFill fill = maskShape.MainFill;
-                float texHeight = gradientTex != null ? gradientTex.height : 3;
-                float vCoord = 1.5f / texHeight;
+                float vCoord = 1.5f / ATLAS_HEIGHT;
                 
                 m_InstanceMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, vCoord));
                 m_InstanceMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, 0, 0));
                 
                 int activeMaskCount = 0;
-                RectTransform maskRT = maskShape.rectTransform;
-                Matrix4x4 maskWorldToLocal = maskRT.worldToLocalMatrix;
-                
-                // Note: CollectMaskBooleanOps still uses maskWorldToLocal and works in mask's local space.
-                // The boolean shapes are transformed relative to the mask using world coords, so this logic is still valid
-                // provided maskPivotOffset (GetGeometricCenterOffset) is what AddMaskShapeToShader expects.
-                Vector3 maskPivotOffset = maskShape.GetGeometricCenterOffset();
-                CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, maskWorldToLocal, maskPivotOffset);
+                CollectMaskBooleanOps(maskShape, BooleanOperation.Union, ref activeMaskCount, maskShape.rectTransform.worldToLocalMatrix, maskShape.GetGeometricCenterOffset());
                 
                 m_InstanceMaterial.SetInt(_MaskBoolParams, activeMaskCount);
                 if (activeMaskCount > 0)
@@ -461,14 +782,17 @@ namespace ProceduralShapes.Runtime
             if (shape.m_ShapeType == ShapeType.Rectangle) m_ShaderShapeParams[index] = shape.m_CornerRadius;
             else if (shape.m_ShapeType == ShapeType.Polygon) m_ShaderShapeParams[index] = new Vector4(shape.m_PolygonSides, shape.m_PolygonRounding, 0, 0);
             else if (shape.m_ShapeType == ShapeType.Star) m_ShaderShapeParams[index] = new Vector4(shape.m_StarPoints, shape.m_StarRatio, shape.m_StarRoundingOuter, shape.m_StarRoundingInner);
+            else if (shape.m_ShapeType == ShapeType.Capsule) m_ShaderShapeParams[index] = new Vector4(shape.m_CapsuleRounding, 0, 0, 0);
+            else if (shape.m_ShapeType == ShapeType.Line) m_ShaderShapeParams[index] = new Vector4(shape.m_LineStart.x, shape.m_LineStart.y, shape.m_LineEnd.x, shape.m_LineEnd.y);
+            else if (shape.m_ShapeType == ShapeType.Ring) m_ShaderShapeParams[index] = new Vector4(shape.m_RingInnerRadius, shape.m_RingStartAngle * Mathf.Deg2Rad, shape.m_RingEndAngle * Mathf.Deg2Rad, 0);
 
             m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, relativeRotation * Mathf.Deg2Rad, 0);
             
-            float otherScale = shape.m_ShapeScale; 
+            Vector2 otherScale = shape.ShapeScale; 
             Vector3 lossyScaleRatio = new Vector3(otherRect.lossyScale.x / rectTransform.lossyScale.x, otherRect.lossyScale.y / rectTransform.lossyScale.y, 1f);
             
-            float finalW = otherRect.rect.width * lossyScaleRatio.x * otherScale;
-            float finalH = otherRect.rect.height * lossyScaleRatio.y * otherScale;
+            float finalW = otherRect.rect.width * lossyScaleRatio.x * otherScale.x;
+            float finalH = otherRect.rect.height * lossyScaleRatio.y * otherScale.y;
 
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
         }
@@ -523,16 +847,15 @@ namespace ProceduralShapes.Runtime
                 otherRect.lossyScale.y / m_CachedMask.Shape.transform.lossyScale.y, 
                 1f);
             
-            float finalW = otherRect.rect.width * lossyScaleRatio.x * shape.ShapeScale;
-            float finalH = otherRect.rect.height * lossyScaleRatio.y * shape.ShapeScale;
+            float finalW = otherRect.rect.width * lossyScaleRatio.x * shape.ShapeScale.x;
+            float finalH = otherRect.rect.height * lossyScaleRatio.y * shape.ShapeScale.y;
 
             m_MaskShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
         }
 
         protected override void OnPopulateMesh(VertexHelper vh)
         {
-            if (m_TextureDirty || m_GradientTexture == null || m_GradientTexture.height != (Effects.Count + 1) * 3)
-                RebuildGradientTexture();
+            RebuildGradientTexture();
 
             if (m_DisableRendering)
             {
@@ -552,8 +875,8 @@ namespace ProceduralShapes.Runtime
             float cx = rect.center.x + pivotOffset.x;
             float cy = rect.center.y + pivotOffset.y;
             
-            float hw = rect.width * 0.5f * m_ShapeScale;
-            float hh = rect.height * 0.5f * m_ShapeScale;
+            float hw = rect.width * 0.5f * m_ShapeScale2D.x;
+            float hh = rect.height * 0.5f * m_ShapeScale2D.y;
             
             minX = Mathf.Min(minX, cx - hw);
             maxX = Mathf.Max(maxX, cx + hw);
@@ -589,21 +912,135 @@ namespace ProceduralShapes.Runtime
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is DropShadowEffect shadow && shadow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, i + 1, shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, 0, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, m_ShapeRotation * Mathf.Deg2Rad, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
 
-            DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 0, 0, MainFill, new Vector3(0, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y));
+            for (int i = 0; i < Effects.Count; i++)
+                if (Effects[i] is OuterGlowEffect glow && glow.Enabled)
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, m_ShapeRotation * Mathf.Deg2Rad, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
+
+            // Main Fill & Stroke use Tight Mesh
+            DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, 0, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, m_ShapeRotation * Mathf.Deg2Rad, MainFill.GradientOffset.x, MainFill.GradientOffset.y), maxExpand);
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerShadowEffect inner && inner.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, i + 1, inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, 0, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, i + 1, inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, m_ShapeRotation * Mathf.Deg2Rad, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is StrokeEffect stroke && stroke.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 2, i + 1, stroke.Fill, Vector3.zero, new Vector4(stroke.Width, (float)stroke.Alignment, stroke.Fill.GradientOffset.x, stroke.Fill.GradientOffset.y));
+                    DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 2, i + 1, stroke.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(stroke.Width, (float)stroke.Alignment, stroke.Fill.GradientOffset.x, stroke.Fill.GradientOffset.y), maxExpand);
             
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is BlurEffect blur && blur.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 4, i + 1, blur.Fill, Vector3.zero, new Vector4(blur.Radius, 0, blur.Fill.GradientOffset.x, blur.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 4, i + 1, blur.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(blur.Radius, m_ShapeRotation * Mathf.Deg2Rad, blur.Fill.GradientOffset.x, blur.Fill.GradientOffset.y));
+        }
+
+        private void DrawLayerMesh(VertexHelper vh, float minX, float maxX, float minY, float maxY, Rect baseRect, int effectType, int textureRowIndex, ShapeFill fill, Vector3 normalData, Vector4 tangentData, float expansion)
+        {
+            bool isRoundedStar = m_ShapeType == ShapeType.Star && (m_StarRoundingOuter > 0.01f || m_StarRoundingInner > 0.01f);
+            
+            if (m_ShapeType == ShapeType.Rectangle || m_ShapeType == ShapeType.Line || m_ShapeType == ShapeType.Capsule || expansion > 5f || isRoundedStar || BooleanOperations.Count > 0)
+            {
+                // Для прямоугольников, линий, капсул, составных фигур и сильно размытых фигур Quad все еще эффективен или необходим
+                DrawLayerQuad(vh, minX, maxX, minY, maxY, baseRect, effectType, textureRowIndex, fill, normalData, tangentData);
+                return;
+            }
+
+            // Генерируем Tight Mesh (Полигон)
+            int segments = 32;
+            if (m_ShapeType == ShapeType.Polygon) segments = m_PolygonSides;
+            else if (m_ShapeType == ShapeType.Star) segments = m_StarPoints * 2;
+
+            Vector2 pivotOffset = GetGeometricCenterOffset();
+            float cx = baseRect.center.x + pivotOffset.x;
+            float cy = baseRect.center.y + pivotOffset.y;
+            float hw = baseRect.width * 0.5f * m_ShapeScale2D.x + expansion;
+            float hh = baseRect.height * 0.5f * m_ShapeScale2D.y + expansion;
+
+            int startVert = vh.currentVertCount;
+            UIVertex vert = UIVertex.simpleVert;
+            vert.color = color;
+            vert.normal = normalData;
+            
+            Vector4 finalTangent = tangentData;
+            if (fill.Type == FillType.Pattern)
+            {
+                finalTangent = new Vector4(fill.PatternTiling.x, fill.PatternTiling.y, fill.PatternOffset.x, fill.PatternOffset.y);
+            }
+            vert.tangent = finalTangent;
+            
+            vert.uv1 = GetPackedShapeParams();
+            vert.uv2 = GetPackedBaseData(baseRect, effectType, m_CornerSmoothing);
+            vert.uv3 = GetPackedFillParams(textureRowIndex, fill);
+
+            // Center vertex
+            vert.position = new Vector3(cx, cy);
+            vert.uv0 = Vector2.zero;
+            vh.AddVert(vert);
+
+            float angleStep = 360f / segments;
+            float rotOffset = m_ShapeRotation;
+
+            for (int i = 0; i <= segments; i++)
+            {
+                float angle = (i * angleStep + rotOffset) * Mathf.Deg2Rad;
+                float s = Mathf.Sin(angle);
+                float c = Mathf.Cos(angle);
+                
+                float r = 1f;
+                if (m_ShapeType == ShapeType.Star && (i % 2 != 0)) r = m_StarRatio;
+
+                Vector2 pos = new Vector2(cx + s * hw * r, cy + c * hh * r);
+                vert.position = pos;
+                vert.uv0 = new Vector2(pos.x - cx, pos.y - cy);
+                vh.AddVert(vert);
+
+                if (i > 0)
+                {
+                    vh.AddTriangle(startVert, startVert + i, startVert + i + 1);
+                }
+            }
+        }
+
+        public Vector4 GetPackedShapeParams()
+        {
+            if (m_ShapeType == ShapeType.Rectangle) return m_CornerRadius;
+            if (m_ShapeType == ShapeType.Polygon) return new Vector4(m_PolygonSides, m_PolygonRounding, 0, 0);
+            if (m_ShapeType == ShapeType.Star) return new Vector4(m_StarPoints, m_StarRatio, m_StarRoundingOuter, m_StarRoundingInner);
+            if (m_ShapeType == ShapeType.Capsule) return new Vector4(m_CapsuleRounding, 0, 0, 0);
+            if (m_ShapeType == ShapeType.Line) return new Vector4(m_LineStart.x, m_LineStart.y, m_LineEnd.x, m_LineEnd.y);
+            if (m_ShapeType == ShapeType.Ring) return new Vector4(m_RingInnerRadius, m_RingStartAngle * Mathf.Deg2Rad, m_RingEndAngle * Mathf.Deg2Rad, 0);
+            return Vector4.zero;
+        }
+
+        private Vector4 GetPackedBaseData(Rect rect, int effectType, float smoothing)
+        {
+            float packedShapeData = (float)m_ShapeType + (Mathf.Clamp01(smoothing / 1000f) * 0.99f);
+            return new Vector4(rect.width * m_ShapeScale2D.x, rect.height * m_ShapeScale2D.y, packedShapeData, effectType);
+        }
+
+        private Vector4 GetPackedFillParams(int rowIndex, ShapeFill fill)
+        {
+            float packedRowAndHeight = rowIndex + (ATLAS_HEIGHT * 100f);
+            float type = (float)fill.Type;
+            
+            // Пакуем NoiseAmount в дробную часть угла
+            float angle = fill.GradientAngle;
+            float packedNoiseAmount = Mathf.Floor(angle) + (Mathf.Clamp(m_EdgeNoiseAmount, 0f, 50f) / 100f);
+            
+            // Если шум активен, используем uv3.w для масштаба шума
+            float scaleOrNoise = fill.GradientScale;
+            if (m_EdgeNoiseAmount > 0.001f)
+            {
+                scaleOrNoise = m_EdgeNoiseScale;
+            }
+
+            if (fill.Type == FillType.Pattern)
+            {
+                // Для паттерна угол не важен, используем только для шума
+                packedNoiseAmount = 0f + (Mathf.Clamp(m_EdgeNoiseAmount, 0f, 50f) / 100f);
+            }
+            
+            return new Vector4(packedRowAndHeight, type, packedNoiseAmount, scaleOrNoise);
         }
 
         private void ExpandBoundsRecursive(ProceduralShape currentShape, ref float minX, ref float maxX, ref float minY, ref float maxY, Matrix4x4 rootWorldToLocal)
@@ -636,17 +1073,29 @@ namespace ProceduralShapes.Runtime
         private void DrawLayerQuad(VertexHelper vh, float minX, float maxX, float minY, float maxY, Rect baseRect, int effectType, int textureRowIndex, ShapeFill fill, Vector3 normalData, Vector4 tangentData)
         {
             Vector4 uv1_shapeParams = Vector4.zero;
+            float customSmoothing = m_CornerSmoothing;
+
             if (m_ShapeType == ShapeType.Rectangle) uv1_shapeParams = m_CornerRadius;
             else if (m_ShapeType == ShapeType.Polygon) uv1_shapeParams = new Vector4(m_PolygonSides, m_PolygonRounding, 0, 0);
             else if (m_ShapeType == ShapeType.Star) uv1_shapeParams = new Vector4(m_StarPoints, m_StarRatio, m_StarRoundingOuter, m_StarRoundingInner);
+            else if (m_ShapeType == ShapeType.Capsule) uv1_shapeParams = new Vector4(m_CapsuleRounding, 0, 0, 0);
+            else if (m_ShapeType == ShapeType.Line) 
+            {
+                uv1_shapeParams = new Vector4(m_LineStart.x, m_LineStart.y, m_LineEnd.x, m_LineEnd.y);
+                customSmoothing = m_LineWidth; // Используем для толщины линии
+            }
+            else if (m_ShapeType == ShapeType.Ring)
+            {
+                uv1_shapeParams = new Vector4(m_RingInnerRadius, m_RingStartAngle * Mathf.Deg2Rad, m_RingEndAngle * Mathf.Deg2Rad, 0);
+            }
 
-            float packedShapeData = (float)m_ShapeType + (m_CornerSmoothing * 0.99f);
+            float packedShapeData = (float)m_ShapeType + (Mathf.Clamp01(customSmoothing / 1000f) * 0.99f);
             
-            float scaledW = baseRect.width * m_ShapeScale;
-            float scaledH = baseRect.height * m_ShapeScale;
+            float scaledW = baseRect.width * m_ShapeScale2D.x;
+            float scaledH = baseRect.height * m_ShapeScale2D.y;
             Vector4 uv2_baseData = new Vector4(scaledW, scaledH, packedShapeData, effectType);
             
-            float packedRowAndHeight = textureRowIndex + (m_GradientTexture.height * 100f);
+            float packedRowAndHeight = textureRowIndex + (ATLAS_HEIGHT * 100f);
             Vector4 uv3_fillParams = new Vector4(packedRowAndHeight, (float)fill.Type, fill.GradientAngle, fill.GradientScale);
 
             Vector2 pivotOffset = GetGeometricCenterOffset();
@@ -654,18 +1103,14 @@ namespace ProceduralShapes.Runtime
             UIVertex vert = UIVertex.simpleVert;
             vert.color = color; 
             
-            float baseRotation = 0f;
+            vert.normal = normalData;
             
-            if (effectType == 1 || effectType == 3) 
+            Vector4 finalTangent = tangentData;
+            if (fill.Type == FillType.Pattern)
             {
-                vert.normal = new Vector3(normalData.x, normalData.y, normalData.z);
-                vert.tangent = new Vector4(tangentData.x, baseRotation, tangentData.z, tangentData.w);
+                finalTangent = new Vector4(fill.PatternTiling.x, fill.PatternTiling.y, fill.PatternOffset.x, fill.PatternOffset.y);
             }
-            else
-            {
-                vert.normal = new Vector3(baseRotation, normalData.y, normalData.z);
-                vert.tangent = tangentData; 
-            }
+            vert.tangent = finalTangent;
             
             vert.uv1 = uv1_shapeParams;
             vert.uv2 = uv2_baseData;

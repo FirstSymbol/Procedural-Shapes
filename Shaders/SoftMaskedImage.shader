@@ -4,6 +4,7 @@
     {
         [PerRendererData] _MainTex ("Sprite Texture", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
+        _InternalPadding ("Internal Padding", Float) = 0
         
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -67,6 +68,7 @@
             sampler2D _MainTex;
             fixed4 _Color;
             float4 _ClipRect;
+            float _InternalPadding;
             
             float4 _MaskWorldToLocalX;
             float4 _MaskWorldToLocalY;
@@ -134,6 +136,7 @@
                     }
                     
                     float d = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
+                    d += _InternalPadding;
                     
                     int boolCount = _MaskBoolParams;
                     if (boolCount > 0) {

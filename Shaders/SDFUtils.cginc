@@ -10,6 +10,18 @@ float smax(float a, float b, float k) {
     return -smin(-a, -b, k);
 }
 
+float hash(float2 p) {
+    return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453123);
+}
+
+float noise(float2 p) {
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash(i + float2(0.0, 0.0)), hash(i + float2(1.0, 0.0)), u.x),
+                lerp(hash(i + float2(0.0, 1.0)), hash(i + float2(1.0, 1.0)), u.x), u.y);
+}
+
 float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, float4 params) {
     if (shapeType < 0.5) { 
         // Rectangle
@@ -49,60 +61,85 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
         return length(p_sec - closest) * sign(p_sec.y - closest.y) - rounding;
     }
     else if (shapeType < 3.5) {
-        // Star (Corrected)
+        // Star (Exact Distance to alternating polygon with inner rounding)
         float n = max(3.0, params.x);
-        float ratio = params.y;
         float maxR = min(halfSize.x, halfSize.y);
         
-        // Target visual radii
-        float visualOuterR = maxR;
-        float visualInnerR = maxR * ratio;
+        float ro = params.z * maxR * 0.5;
+        float rOut = max(maxR - ro, 0.001);
+        float rIn  = max(params.y * maxR - ro, 0.001);
         
-        // Rounding parameters
-        float roundOuter = params.z * maxR * 0.5;
-        float roundInner = params.w * maxR * 0.5;
-        
-        // Skeleton radii (compensate for offset)
-        // Ensure skeleton doesn't invert
-        float skelOuterR = visualOuterR - roundOuter;
-        float skelInnerR = visualInnerR - roundOuter; // Both effectively expand by roundOuter
-        
-        // If skelInnerR becomes too small (or negative), we have artifacts.
-        // We must clamp rounding if geometry is too tight.
-        // But for visual consistency, let's just clamp the skeleton radius.
-        // skelInnerR = max(skelInnerR, 0.001); // Prevent negative
-        
-        float an = 3.14159265 / n;
+        float an = 3.1415926535 / n;
         float a = atan2(p.x, p.y);
-        float bn = floor(a / (2.0 * an));
-        float f1 = a - (bn + 0.5) * 2.0 * an;
-        float f2 = f1 > 0.0 ? f1 - 2.0 * an : f1 + 2.0 * an;
+        float f = fmod(abs(a), 2.0 * an);
+        if (f > an) f = 2.0 * an - f;
         
-        float2 p_sec1 = length(p) * float2(abs(sin(f1)), cos(f1));
-        float2 p_sec2 = length(p) * float2(abs(sin(f2)), cos(f2));
+        float2 q0 = length(p) * float2(sin(f), cos(f));
+        float2 q1 = length(p) * float2(sin(2.0 * an - f), cos(2.0 * an - f));
         
-        // Vertices of the skeleton sector
-        float2 v1 = float2(0.0, skelOuterR);
-        float2 v2 = float2(skelInnerR * sin(an), skelInnerR * cos(an));
-        float2 ba = v2 - v1;
+        float2 p1 = float2(0.0, rOut);
+        float2 p2 = float2(rIn * sin(an), rIn * cos(an));
         
-        // Distance to segment v1-v2 (one side)
-        float2 pa1 = p_sec1 - v1;
-        float h1 = clamp(dot(pa1, ba) / dot(ba, ba), 0.0, 1.0);
-        float d1 = length(pa1 - ba * h1) * sign(pa1.y * ba.x - pa1.x * ba.y);
+        float2 ba = p2 - p1;
+        float ba2 = max(dot(ba, ba), 0.00001);
         
-        // Distance to segment v1-v2 (other side)
-        float2 pa2 = p_sec2 - v1;
-        float h2 = clamp(dot(pa2, ba) / dot(ba, ba), 0.0, 1.0);
-        float d2 = length(pa2 - ba * h2) * sign(pa2.y * ba.x - pa2.x * ba.y);
+        // Segment 0
+        float2 pa0 = q0 - p1;
+        float h0 = clamp(dot(pa0, ba) / ba2, 0.0, 1.0);
+        float2 d0 = pa0 - ba * h0;
+        float s0 = (pa0.y * ba.x - pa0.x * ba.y >= 0.0) ? 1.0 : -1.0;
+        float dist0 = length(d0) * s0;
         
-        // Smooth min for inner corners
-        float k = roundInner * 2.0 + 0.001;
-        // smin(d1, d2)
-        float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
-        float d = lerp(d2, d1, h) - k * h * (1.0 - h);
+        // Segment 1 (adjacent wedge)
+        float2 pa1 = q1 - p1;
+        float h1 = clamp(dot(pa1, ba) / ba2, 0.0, 1.0);
+        float2 d1 = pa1 - ba * h1;
+        float s1 = (pa1.y * ba.x - pa1.x * ba.y >= 0.0) ? 1.0 : -1.0;
+        float dist1 = length(d1) * s1;
         
-        return d - roundOuter;
+        float rInner = params.w * maxR;
+        float finalDist = dist0;
+        if (rInner > 0.001) {
+            finalDist = smin(dist0, dist1, rInner);
+        }
+        
+        return finalDist - ro;
+    }
+    else if (shapeType < 4.5) {
+        // Capsule
+        float r = params.x * min(halfSize.x, halfSize.y);
+        float2 h = max(halfSize - r, 0.0);
+        return length(p - clamp(p, -h, h)) - r;
+    }
+    else if (shapeType < 5.5) {
+        // Line
+        float2 a = params.xy;
+        float2 b = params.zw;
+        float thickness = smoothing * 0.5; // smoothing is m_LineWidth
+        float2 pa = p - a, ba = b - a;
+        float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(pa - ba * h) - thickness;
+    }
+    else if (shapeType < 6.5) {
+        // Ring / Arc
+        float maxR = min(halfSize.x, halfSize.y);
+        float innerR = params.x * maxR;
+        float thickness = (maxR - innerR) * 0.5;
+        float midR = (maxR + innerR) * 0.5;
+
+        float d = abs(length(p) - midR) - thickness;
+
+        if (abs(params.z - params.y) < 6.28) {
+            float a = atan2(p.x, p.y);
+            float da = frac((a - params.y) / 6.28318);
+            float targetDa = frac((params.z - params.y) / 6.28318);
+            if (da > targetDa) {
+                float2 p1 = midR * float2(sin(params.y), cos(params.y));
+                float2 p2 = midR * float2(sin(params.z), cos(params.z));
+                d = max(d, min(length(p - p1), length(p - p2)) - thickness);
+            }
+        }
+        return d;
     }
     
     return 100000.0; // None

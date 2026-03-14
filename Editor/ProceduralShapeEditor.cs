@@ -11,12 +11,17 @@ namespace ProceduralShapes.Editor
     {
         private SerializedProperty m_DisableRendering;
         private SerializedProperty m_EdgeSoftness;
-        private SerializedProperty m_ShapeScale;
+        private SerializedProperty m_InternalPadding;
+        private SerializedProperty m_ShapeScale2D;
+        private SerializedProperty m_LinkScale;
         private SerializedProperty m_ShapePivot;
         private SerializedProperty m_ShapeRotation;
         private SerializedProperty m_ShapeType, m_CornerRadius, m_CornerSmoothing;
         private SerializedProperty m_PolygonSides, m_PolygonRounding; // Rotation removed
         private SerializedProperty m_StarPoints, m_StarRatio, m_StarRoundingOuter, m_StarRoundingInner; // Rotation removed
+        private SerializedProperty m_CapsuleRounding;
+        private SerializedProperty m_LineStart, m_LineEnd, m_LineWidth;
+        private SerializedProperty m_RingInnerRadius, m_RingStartAngle, m_RingEndAngle;
         private SerializedProperty m_MainFill, m_BooleanOperations, m_Effects;
 
         protected override void OnEnable()
@@ -24,7 +29,9 @@ namespace ProceduralShapes.Editor
             base.OnEnable();
             m_DisableRendering = serializedObject.FindProperty("m_DisableRendering");
             m_EdgeSoftness = serializedObject.FindProperty("m_EdgeSoftness");
-            m_ShapeScale = serializedObject.FindProperty("m_ShapeScale");
+            m_InternalPadding = serializedObject.FindProperty("m_InternalPadding");
+            m_ShapeScale2D = serializedObject.FindProperty("m_ShapeScale2D");
+            m_LinkScale = serializedObject.FindProperty("m_LinkScale");
             m_ShapePivot = serializedObject.FindProperty("m_ShapePivot");
             m_ShapeRotation = serializedObject.FindProperty("m_ShapeRotation"); // Added
             
@@ -41,6 +48,15 @@ namespace ProceduralShapes.Editor
             m_StarRoundingOuter = serializedObject.FindProperty("m_StarRoundingOuter");
             m_StarRoundingInner = serializedObject.FindProperty("m_StarRoundingInner");
             // m_StarRotation removed
+
+            m_CapsuleRounding = serializedObject.FindProperty("m_CapsuleRounding");
+            m_LineStart = serializedObject.FindProperty("m_LineStart");
+            m_LineEnd = serializedObject.FindProperty("m_LineEnd");
+            m_LineWidth = serializedObject.FindProperty("m_LineWidth");
+
+            m_RingInnerRadius = serializedObject.FindProperty("m_RingInnerRadius");
+            m_RingStartAngle = serializedObject.FindProperty("m_RingStartAngle");
+            m_RingEndAngle = serializedObject.FindProperty("m_RingEndAngle");
 
             m_MainFill = serializedObject.FindProperty("MainFill");
             m_BooleanOperations = serializedObject.FindProperty("BooleanOperations");
@@ -77,7 +93,32 @@ namespace ProceduralShapes.Editor
 
             if (!isNone)
             {
-                EditorGUILayout.PropertyField(m_ShapeScale, new GUIContent("Shape Scale", "Uniform scale factor for the shape inside the RectTransform bounds."));
+                EditorGUILayout.BeginHorizontal();
+                if (m_LinkScale.boolValue)
+                {
+                    EditorGUI.BeginChangeCheck();
+                    float newScale = EditorGUILayout.FloatField(new GUIContent("Shape Scale", "Uniform scale factor for the shape inside the RectTransform bounds."), m_ShapeScale2D.vector2Value.x);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        m_ShapeScale2D.vector2Value = new Vector2(newScale, newScale);
+                    }
+                }
+                else
+                {
+                    EditorGUILayout.PropertyField(m_ShapeScale2D, new GUIContent("Shape Scale", "Scale factor for the shape inside the RectTransform bounds."));
+                }
+                
+                if (GUILayout.Button(m_LinkScale.boolValue ? "🔗" : "🔓", GUILayout.Width(30)))
+                {
+                    m_LinkScale.boolValue = !m_LinkScale.boolValue;
+                    if (m_LinkScale.boolValue)
+                    {
+                        m_ShapeScale2D.vector2Value = new Vector2(m_ShapeScale2D.vector2Value.x, m_ShapeScale2D.vector2Value.x);
+                    }
+                }
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.PropertyField(m_ShapeRotation, new GUIContent("Shape Rotation", "Rotation of the shape geometry in degrees."));
                 EditorGUILayout.PropertyField(m_ShapePivot, new GUIContent("Shape Pivot", "Geometric pivot relative to RectTransform center. (0.5, 0.5) is centered."));
                 EditorGUILayout.Space(5);
 
@@ -112,9 +153,26 @@ namespace ProceduralShapes.Editor
                     EditorGUILayout.PropertyField(m_StarRoundingOuter);
                     EditorGUILayout.PropertyField(m_StarRoundingInner);
                 }
+                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Capsule)
+                {
+                    EditorGUILayout.PropertyField(m_CapsuleRounding);
+                }
+                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Line)
+                {
+                    EditorGUILayout.PropertyField(m_LineStart);
+                    EditorGUILayout.PropertyField(m_LineEnd);
+                    EditorGUILayout.PropertyField(m_LineWidth);
+                }
+                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Ring)
+                {
+                    EditorGUILayout.PropertyField(m_RingInnerRadius);
+                    EditorGUILayout.PropertyField(m_RingStartAngle);
+                    EditorGUILayout.PropertyField(m_RingEndAngle);
+                }
             }
             
             EditorGUILayout.Space(5);
+            EditorGUILayout.PropertyField(m_InternalPadding, new GUIContent("Internal Padding (Offset)"));
             EditorGUILayout.PropertyField(m_EdgeSoftness, new GUIContent("Edge Softness (AA)"));
 
             GUILayout.Space(5);
@@ -216,6 +274,7 @@ namespace ProceduralShapes.Editor
                 GenericMenu menu = new GenericMenu();
                 menu.AddItem(new GUIContent("Drop Shadow"), false, () => AddEffect(new DropShadowEffect()));
                 menu.AddItem(new GUIContent("Inner Shadow"), false, () => AddEffect(new InnerShadowEffect()));
+                menu.AddItem(new GUIContent("Outer Glow"), false, () => AddEffect(new OuterGlowEffect()));
                 menu.AddItem(new GUIContent("Stroke"), false, () => AddEffect(new StrokeEffect()));
                 menu.AddItem(new GUIContent("Blur"), false, () => AddEffect(new BlurEffect()));
                 menu.ShowAsContext();
@@ -230,9 +289,109 @@ namespace ProceduralShapes.Editor
             GUILayout.Space(5);
             EditorGUILayout.EndVertical();
 
+            // --- БЛОК 5: TOOLS ---
+            EditorGUILayout.Space(5);
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField("5. Tools", sectionTitle);
+            if (GUILayout.Button("Bake to PolygonCollider2D"))
+            {
+                BakeToCollider((ProceduralShape)target);
+            }
+            EditorGUILayout.EndVertical();
+
             if (serializedObject.ApplyModifiedProperties())
             {
                 foreach (var t in targets) ((ProceduralShape)t).SetAllDirty();
+            }
+        }
+
+        private void BakeToCollider(ProceduralShape shape)
+        {
+            PolygonCollider2D collider = shape.GetComponent<PolygonCollider2D>();
+            if (collider == null) collider = shape.gameObject.AddComponent<PolygonCollider2D>();
+
+            Undo.RecordObject(collider, "Bake SDF to Collider");
+
+            int segments = 32;
+            if (shape.m_ShapeType == ShapeType.Polygon) segments = shape.m_PolygonSides;
+            else if (shape.m_ShapeType == ShapeType.Star) segments = shape.m_StarPoints * 2;
+
+            Vector2[] points = new Vector2[segments];
+            Rect rect = shape.rectTransform.rect;
+            float hw = rect.width * 0.5f * shape.ShapeScale.x;
+            float hh = rect.height * 0.5f * shape.ShapeScale.y;
+            float angleStep = 360f / segments;
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (i * angleStep + shape.ShapeRotation) * Mathf.Deg2Rad;
+                float r = 1f;
+                if (shape.m_ShapeType == ShapeType.Star && (i % 2 != 0)) r = shape.m_StarRatio;
+
+                points[i] = new Vector2(Mathf.Sin(angle) * hw * r, Mathf.Cos(angle) * hh * r) + shape.GetGeometricCenterOffset();
+            }
+
+            collider.points = points;
+            EditorUtility.SetDirty(collider);
+        }
+
+        private void OnSceneGUI()
+        {
+            ProceduralShape shape = (ProceduralShape)target;
+            if (shape == null) return;
+
+            RectTransform rt = shape.rectTransform;
+            Vector2 size = rt.rect.size;
+            
+            Handles.color = Color.cyan;
+            EditorGUI.BeginChangeCheck();
+
+            // Матрица для работы в локальном пространстве RectTransform
+            Matrix4x4 localMatrix = rt.localToWorldMatrix;
+            using (new Handles.DrawingScope(localMatrix))
+            {
+                if (shape.m_ShapeType == ShapeType.Line)
+                {
+                    Vector3 start = shape.m_LineStart;
+                    Vector3 end = shape.m_LineEnd;
+                    
+                    start = Handles.FreeMoveHandle(start, 5f, Vector3.zero, Handles.CircleHandleCap);
+                    end = Handles.FreeMoveHandle(end, 5f, Vector3.zero, Handles.CircleHandleCap);
+                    
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Undo.RecordObject(shape, "Move Line Points");
+                        shape.m_LineStart = start;
+                        shape.m_LineEnd = end;
+                        shape.SetAllDirty();
+                    }
+                }
+                else if (shape.m_ShapeType == ShapeType.Star)
+                {
+                    float dist = (size.x * 0.5f) * shape.m_StarRatio * shape.ShapeScale.x;
+                    Vector3 handlePos = new Vector3(dist, 0, 0);
+                    handlePos = Handles.FreeMoveHandle(handlePos, 5f, Vector3.zero, Handles.DotHandleCap);
+                    
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Undo.RecordObject(shape, "Change Star Ratio");
+                        shape.m_StarRatio = Mathf.Clamp01(handlePos.magnitude / (size.x * 0.5f * shape.ShapeScale.x));
+                        shape.SetAllDirty();
+                    }
+                }
+                else if (shape.m_ShapeType == ShapeType.Ring)
+                {
+                    float dist = (size.x * 0.5f) * shape.m_RingInnerRadius * shape.ShapeScale.x;
+                    Vector3 handlePos = new Vector3(0, dist, 0);
+                    handlePos = Handles.FreeMoveHandle(handlePos, 5f, Vector3.zero, Handles.DotHandleCap);
+                    
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Undo.RecordObject(shape, "Change Ring Inner Radius");
+                        shape.m_RingInnerRadius = Mathf.Clamp01(handlePos.magnitude / (size.x * 0.5f * shape.ShapeScale.x));
+                        shape.SetAllDirty();
+                    }
+                }
             }
         }
 
@@ -244,6 +403,7 @@ namespace ProceduralShapes.Editor
             string rawName = effectProp.managedReferenceFullTypename;
             string effectName = rawName.Contains("DropShadow") ? "Drop Shadow" : 
                                 rawName.Contains("InnerShadow") ? "Inner Shadow" : 
+                                rawName.Contains("OuterGlow") ? "Outer Glow" :
                                 rawName.Contains("Stroke") ? "Stroke" : "Blur";
 
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);

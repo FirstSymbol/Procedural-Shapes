@@ -3,8 +3,10 @@
     Properties
     {
         [HideInInspector] _MainTex ("Gradient Palette", 2D) = "white" {}
+        _PatternTex ("Pattern Texture", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
         _AntiAliasing ("Edge Softness (AA)", Range(0.0, 5.0)) = 0.75
+        _InternalPadding ("Internal Padding", Float) = 0
         
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -75,6 +77,7 @@
             };
 
             sampler2D _MainTex;
+            sampler2D _PatternTex;
             float4 _ClipRect;
             
             int _BoolParams1; 
@@ -120,22 +123,24 @@
             fixed4 frag (v2f i) : SV_Target {
                 float2 p = i.uv0;
                 float shapeType = floor(i.baseData.z);
-                float cornerSmoothing = frac(i.baseData.z) / 0.99;
+                float customSmoothing = frac(i.baseData.z) / 0.99 * 1000.0;
                 float effectType = i.baseData.w; 
                 
                 float aa = 1.0;
                 float blur = 0.0;
                 float baseRotation = 0.0;
+                float internalPadding = 0.0;
                 
-                if (effectType == 1.0 || effectType == 3.0) { 
+                if (effectType == 1.0 || effectType == 3.0) { // Shadows
                     p -= i.normal.xy; 
                     blur = i.normal.z;
                     baseRotation = i.tangent.y;
                     aa = 1.0; 
-                } else {
-                    baseRotation = i.normal.x;
+                } else { // Main Fill, Stroke, Blur
+                    internalPadding = i.normal.x;
                     aa = max(i.normal.y, 0.001);
                     blur = i.normal.z;
+                    baseRotation = i.tangent.y;
                 }
                 
                 blur = max(blur, aa);
@@ -146,10 +151,22 @@
                     float c = cos(-baseRotation);
                     p_rotated = float2(p.x * c - p.y * s, p.x * s + p.y * c);
                 }
+
+                // --- EDGE NOISE DISTORTION ---
+                // Пакуем NoiseAmount в uv3.z (дробная часть) и NoiseScale в uv3.w
+                float noiseAmount = frac(i.fillParams.z) * 100.0;
+                float noiseScale = i.fillParams.w;
+                
+                float2 noiseP = p_rotated;
+                if (noiseAmount > 0.001) {
+                    float n = noise(p_rotated * noiseScale * 0.1);
+                    noiseP += (n * 2.0 - 1.0) * noiseAmount;
+                }
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
-                float d = GetBasicSDF(p_rotated, halfSize, shapeType, cornerSmoothing, i.shapeParams);
+                float d = GetBasicSDF(noiseP, halfSize, shapeType, customSmoothing, i.shapeParams);
+                d += internalPadding;
 
                 int boolCount = _BoolParams1;
                 if (boolCount > 0) {
@@ -309,21 +326,28 @@
                 float gradScale = i.fillParams.w;
                 float2 gradOffset = i.tangent.zw;
 
-                float2 gradP = p_rotated - (halfSize * gradOffset);
-                gradP /= max(gradScale, 0.001);
+                float4 colorSample;
+                if (fillType > 3.5) { // Pattern
+                    float2 patternUV = p_rotated / halfSize * 0.5 + 0.5;
+                    patternUV = patternUV * gradScale + gradOffset;
+                    colorSample = tex2D(_PatternTex, patternUV);
+                } else {
+                    float2 gradP = p_rotated - (halfSize * gradOffset);
+                    gradP /= max(gradScale, 0.001);
 
-                float t = 0.5;
-                if (fillType == 1.0) { 
-                    float rad = gradAngle * 0.0174533;
-                    float2 dir = float2(cos(rad), sin(rad));
-                    t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
-                } else if (fillType == 2.0) { 
-                    t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
-                } else if (fillType == 3.0) { 
-                    t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
+                    float t = 0.5;
+                    if (fillType == 1.0) { 
+                        float rad = gradAngle * 0.0174533;
+                        float2 dir = float2(cos(rad), sin(rad));
+                        t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
+                    } else if (fillType == 2.0) { 
+                        t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
+                    } else if (fillType == 3.0) { 
+                        t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
+                    }
+                    colorSample = tex2D(_MainTex, float2(saturate(t), (rowIndex * 3.0 + 1.5) / texHeight));
                 }
 
-                float4 colorSample = tex2D(_MainTex, float2(saturate(t), (rowIndex * 3.0 + 1.5) / texHeight));
                 float4 finalColor = colorSample * i.color;
                 finalColor.a *= mask;
                 finalColor.a *= maskFillAlpha; 
