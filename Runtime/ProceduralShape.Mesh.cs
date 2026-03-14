@@ -68,21 +68,21 @@ namespace ProceduralShapes.Runtime
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is DropShadowEffect shadow && shadow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, 0, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, m_EdgeSoftness, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is OuterGlowEffect glow && glow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, 0, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, m_EdgeSoftness, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
 
             DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, m_MainFillAtlasIndex, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y), maxExpand);
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerShadowEffect inner && inner.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, 0, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, m_EdgeSoftness, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerGlowEffect iglow && iglow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, 0, iglow.Fill.GradientOffset.x, iglow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, m_EdgeSoftness, iglow.Fill.GradientOffset.x, iglow.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is StrokeEffect stroke && stroke.Enabled)

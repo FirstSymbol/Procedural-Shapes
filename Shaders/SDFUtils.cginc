@@ -1,4 +1,4 @@
-﻿#ifndef SDF_UTILS_INCLUDED
+#ifndef SDF_UTILS_INCLUDED
 #define SDF_UTILS_INCLUDED
 
 uniform float4 _PathData[64];
@@ -11,6 +11,38 @@ float smin(float a, float b, float k) {
 
 float smax(float a, float b, float k) {
     return -smin(-a, -b, k);
+}
+
+float smin_op(float d1, float d2, float op, float k) {
+    if (op < 1.5) return smin(d1, d2, k);
+    if (op < 2.5) return smax(d1, -d2, k);
+    if (op < 3.5) return smax(d1, d2, k);
+    return d1;
+}
+
+float hard_op(float d1, float d2, float op) {
+    if (op < 1.5) return min(d1, d2); 
+    if (op < 2.5) return max(d1, -d2); 
+    if (op < 3.5) return max(d1, d2); 
+    if (op < 4.5) return max(min(d1, d2), -max(d1, d2)); 
+    return d1;
+}
+
+float GetPerimeterMapping(float2 p, float2 halfSize, float shapeType) {
+    if (shapeType < 0.5) { // Rectangle
+        float w = halfSize.x;
+        float h = halfSize.y;
+        float2 absP = abs(p);
+        if (absP.x * h > absP.y * w) {
+            if (p.x > 0) return 2.0 * w + (h - p.y);
+            else return 4.0 * w + 2.0 * h + (p.y + h);
+        } else {
+            if (p.y > 0) return p.x + w;
+            else return 2.0 * w + 2.0 * h + (w - p.x);
+        }
+    }
+    // Default polar with constant radius to prevent distortion on non-circular shapes
+    return (atan2(p.y, p.x) + 3.14159265) * (halfSize.x + halfSize.y) * 0.5;
 }
 
 float hash(float2 p) {

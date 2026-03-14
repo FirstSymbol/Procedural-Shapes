@@ -1,4 +1,4 @@
-﻿Shader "UI/ProceduralShapes/Shape"
+Shader "UI/ProceduralShapes/Shape"
 {
     Properties
     {
@@ -121,7 +121,8 @@
             }
 
             fixed4 frag (v2f i) : SV_Target {
-                float2 p = i.uv0.xy;
+                float2 p_orig = i.uv0.xy;
+                float2 p = p_orig;
                 float shapeType = floor(i.baseData.z);
                 float customSmoothing = frac(i.baseData.z) / 0.99 * 1000.0;
                 float effectType = i.baseData.w; 
@@ -131,195 +132,92 @@
                 float internalPadding = 0.0;
                 
                 if (effectType == 1.0 || effectType == 3.0) { // Shadows
-                    p -= i.normal.xy; 
+                    p -= i.normal.xy; // Original project offset logic
                     blur = i.normal.z;
-                    aa = 1.0; 
+                    aa = max(i.tangent.y, 0.001); 
                 } else { // Main Fill, Stroke, Blur
                     internalPadding = i.normal.x;
                     aa = max(i.normal.y, 0.001);
                     blur = i.normal.z;
                 }
                 
-                blur = max(blur, aa);
-                
-                // --- EDGE NOISE DISTORTION ---
                 float noiseAmount = frac(i.fillParams.z) * 100.0;
                 float noiseScale = i.fillParams.w;
-                
-                float2 noiseP = p;
+                float2 noiseOffset = 0;
                 if (noiseAmount > 0.001) {
-                    float n = noise(p * noiseScale * 0.1);
-                    noiseP += (n * 2.0 - 1.0) * noiseAmount;
+                    float n = noise(p_orig * noiseScale * 0.1);
+                    noiseOffset = (n * 2.0 - 1.0) * noiseAmount;
                 }
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
-                float d = GetBasicSDF(noiseP, halfSize, shapeType, customSmoothing, i.shapeParams);
-                d += internalPadding;
+                // Base Distances
+                float d = GetBasicSDF(p + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams);
+                float d_orig = GetBasicSDF(p_orig + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams);
 
                 int boolCount = _BoolParams1;
                 if (boolCount > 0) {
                     for (int k = 0; k < 8; k++) {
                         if (k >= boolCount) break;
-
                         float boolOp = _BoolData_OpType[k].x;
                         float boolType = _BoolData_OpType[k].y;
                         float boolSmooth = _BoolData_OpType[k].z;
                         float smoothBlend = _BoolData_OpType[k].w; 
-                        
                         float4 boolTrans = _BoolData_Transform[k];
                         float2 boolSize = _BoolData_Size[k].xy;
                         float4 boolShapeParams = _BoolData_ShapeParams[k];
 
+                        // Sample shifted (d)
                         float2 p2 = p - boolTrans.xy;
-                        float rot = boolTrans.z;
-                        if (abs(rot) > 0.0001) {
-                            float s = sin(-rot);
-                            float c = cos(-rot);
+                        if (abs(boolTrans.z) > 0.0001) {
+                            float s = sin(-boolTrans.z); float c = cos(-boolTrans.z);
                             p2 = float2(p2.x * c - p2.y * s, p2.x * s + p2.y * c);
                         }
+                        float d2 = GetBasicSDF(p2 + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
+                        if (smoothBlend > 0.001) d = smin_op(d, d2, boolOp, smoothBlend);
+                        else d = hard_op(d, d2, boolOp);
 
-                        float d2 = GetBasicSDF(p2, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
-
-                        if (smoothBlend > 0.001) 
-                        {
-                            if (boolOp < 1.5) d = smin(d, d2, smoothBlend);
-                            else if (boolOp < 2.5) d = smax(d, -d2, smoothBlend);
-                            else if (boolOp < 3.5) d = smax(d, d2, smoothBlend);
+                        // Sample original (d_orig)
+                        float2 p2_orig = p_orig - boolTrans.xy;
+                        if (abs(boolTrans.z) > 0.0001) {
+                            float s = sin(-boolTrans.z); float c = cos(-boolTrans.z);
+                            p2_orig = float2(p2_orig.x * c - p2_orig.y * s, p2_orig.x * s + p2_orig.y * c);
                         }
-                        else 
-                        {
-                            if (boolOp < 1.5) d = min(d, d2); 
-                            else if (boolOp < 2.5) d = max(d, -d2); 
-                            else if (boolOp < 3.5) d = max(d, d2); 
-                            else if (boolOp < 4.5) d = max(min(d, d2), -max(d, d2)); 
-                        }
+                        float d2_orig = GetBasicSDF(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
+                        if (smoothBlend > 0.001) d_orig = smin_op(d_orig, d2_orig, boolOp, smoothBlend);
+                        else d_orig = hard_op(d_orig, d2_orig, boolOp);
                     }
                 }
                 
-                float maskFillAlpha = 1.0;
-                
-                // --- GLOBAL MASKING ---
-                if (_MaskParams.x > 0.5) {
-                    float maskType = _MaskParams.y;
-                    float maskSmooth = _MaskParams.z;
-                    float maskFeather = _MaskParams.w;
-                    
-                    float4x4 childToMask = float4x4(
-                        _MaskMatrixX,
-                        _MaskMatrixY,
-                        _MaskMatrixZ,
-                        _MaskMatrixW
-                    );
-                    
-                    float2 maskP = mul(childToMask, float4(p, 0, 1)).xy;
-                    
-                    float maskD = GetBasicSDF(maskP, _MaskSize.xy * 0.5, maskType, maskSmooth, _MaskShape);
-                    
-                    int mBoolCount = _MaskBoolParams;
-                    if (mBoolCount > 0) {
-                        for (int j = 0; j < 8; j++) {
-                            if (j >= mBoolCount) break;
-
-                            float bOp = _MaskBoolOpType[j].x;
-                            float bType = _MaskBoolOpType[j].y;
-                            float bSmooth = _MaskBoolOpType[j].z;
-                            float bBlend = _MaskBoolOpType[j].w;
-                            
-                            float4 bTrans = _MaskBoolTransform[j]; 
-                            float2 bSize = _MaskBoolSize[j].xy;
-                            float4 bParams = _MaskBoolShapeParams[j];
-
-                            float2 p3 = maskP - bTrans.xy; 
-                            float rot3 = bTrans.z;
-                            if (abs(rot3) > 0.0001) {
-                                float s = sin(-rot3);
-                                float c = cos(-rot3);
-                                p3 = float2(p3.x * c - p3.y * s, p3.x * s + p3.y * c);
-                            }
-
-                            float d3 = GetBasicSDF(p3, bSize * 0.5, bType, bSmooth, bParams);
-
-                            if (bBlend > 0.001) {
-                                if (bOp < 1.5) maskD = smin(maskD, d3, bBlend);
-                                else if (bOp < 2.5) maskD = smax(maskD, -d3, bBlend);
-                                else if (bOp < 3.5) maskD = smax(maskD, d3, bBlend);
-                            } else {
-                                if (bOp < 1.5) maskD = min(maskD, d3); 
-                                else if (bOp < 2.5) maskD = max(maskD, -d3); 
-                                else if (bOp < 3.5) maskD = max(maskD, d3); 
-                                else if (bOp < 4.5) maskD = max(min(maskD, d3), -max(maskD, d3)); 
-                            }
-                        }
-                    }
-                    
-                    if (maskFeather > 0.001) {
-                        d = smax(d, maskD, maskFeather);
-                    } else {
-                        d = max(d, maskD);
-                    }
-                    
-                    float mFillType = _MaskFillParams.x;
-                    float mGradAngle = _MaskFillParams.y;
-                    float mGradScale = _MaskFillParams.z;
-                    float mRowIndex = _MaskFillParams.w;
-                    float2 mGradOffset = _MaskFillOffset.xy;
-                    float mBaseAlpha = _MaskFillOffset.z;
-
-                    float2 mGradP = maskP - (_MaskSize.xy * 0.5 * mGradOffset);
-                    mGradP /= max(mGradScale, 0.001);
-
-                    float mt = 0.5;
-                    if (mFillType > 0.5 && mFillType < 1.5) { // Linear
-                        float rad = mGradAngle * 0.0174533;
-                        float2 dir = float2(cos(rad), sin(rad));
-                        mt = (dot(mGradP, dir) / max(abs(dir.x*_MaskSize.x*0.5)+abs(dir.y*_MaskSize.y*0.5), 0.001)) * 0.5 + 0.5;
-                    } else if (mFillType > 1.5 && mFillType < 2.5) { // Radial
-                        mt = length(mGradP) / max(max(_MaskSize.x*0.5, _MaskSize.y*0.5), 0.001);
-                    } else if (mFillType > 2.5 && mFillType < 3.5) { // Angular
-                        mt = frac((atan2(mGradP.y, mGradP.x) - mGradAngle * 0.0174533) / 6.28318 + 0.5);
-                    }
-                    
-                    float mVCoord = (mRowIndex * 3.0 + 1.5) / 512.0;
-                    if (mFillType > 0.5) { 
-                         maskFillAlpha = tex2D(_MaskTex, float2(saturate(mt), mVCoord)).a;
-                    } else {
-                         maskFillAlpha = tex2D(_MaskTex, float2(0.5, mVCoord)).a; 
-                    }
-                    maskFillAlpha *= mBaseAlpha;
-                }
+                d += internalPadding;
+                d_orig += internalPadding;
 
                 float spread = i.tangent.x;
-                if (effectType == 1.0) d -= spread; 
-                else if (effectType == 2.0) { 
+                float mask = 0;
+
+                if (effectType == 1.0) { // Drop Shadow
+                    d -= spread;
+                    mask = smoothstep(max(blur, aa), -max(blur, aa), d);
+                }
+                else if (effectType == 2.0) { // Stroke
                     float alignment = i.tangent.y;
                     float strokeOffset = (alignment == 0) ? -spread * 0.5 : ((alignment == 2) ? spread * 0.5 : 0);
-                    d = abs(d - strokeOffset) - spread * 0.5;
-                    
+                    float strokeD = abs(d_orig - strokeOffset) - spread * 0.5;
                     if (i.uv0.z > 0.001) {
-                        float dashLen = i.uv0.z;
-                        float spaceLen = i.uv0.w;
-                        float perimeter = 0;
-                        if (shapeType == 5.0) perimeter = p.x;
-                        else perimeter = (atan2(p.y, p.x) + 3.14159265) * length(p);
-                        
-                        float dashCycle = dashLen + spaceLen;
-                        float dashVal = frac(perimeter / dashCycle);
-                        if (dashVal > (dashLen / dashCycle)) discard;
+                        float perimeter = (shapeType == 5.0) ? (p_orig + noiseOffset).x : GetPerimeterMapping(p_orig + noiseOffset, halfSize, shapeType);
+                        if (frac(perimeter / (i.uv0.z + i.uv0.w)) > (i.uv0.z / (i.uv0.z + i.uv0.w))) discard;
                     }
+                    mask = smoothstep(aa, -aa, strokeD);
                 }
-                else if (effectType == 3.0) d += spread; 
-
-                float mask = 0;
-                if (effectType == 3.0) { 
-                    float baseD = d - spread; 
-                    // To fix the gap, we make the mask reach 1.0 exactly at the border (baseD = 0)
-                    // and apply the shape's AA separately to ensure a clean cut.
-                    mask = saturate(smoothstep(-blur, 0, baseD)) * smoothstep(aa, -aa, baseD);
-                } else if (effectType == 5.0) {
+                else if (effectType == 3.0) { // Inner Shadow/Glow
+                    float baseD = d + spread;
+                    mask = saturate(smoothstep(-max(blur, 0.001), 0, baseD));
+                    mask *= smoothstep(aa, -aa, d_orig); 
+                }
+                else if (effectType == 5.0) { // Bevel
                     mask = 1.0; 
-                } else {
-                    mask = smoothstep(blur, -blur, d);
+                } else { // Main Fill, Blur
+                    mask = smoothstep(max(blur, aa), -max(blur, aa), d_orig);
                 }
 
                 if (mask <= 0.001) discard;
@@ -332,13 +230,11 @@
 
                 float4 colorSample;
                 if (fillType > 3.5) { // Pattern
-                    float2 patternUV = p / halfSize * 0.5 + 0.5;
-                    patternUV = patternUV * gradScale + gradOffset;
+                    float2 patternUV = (p_orig / halfSize * 0.5 + 0.5) * gradScale + gradOffset;
                     colorSample = tex2D(_PatternTex, patternUV);
                 } else {
-                    float2 gradP = p - (halfSize * gradOffset);
+                    float2 gradP = p_orig - (halfSize * gradOffset);
                     gradP /= max(gradScale, 0.001);
-
                     float t = 0.5;
                     if (fillType > 0.5 && fillType < 1.5) { // Linear
                         float rad = gradAngle * 0.0174533;
@@ -356,33 +252,19 @@
                 float4 finalColor = colorSample * i.color;
                 
                 if (effectType == 5.0) {
-                    float distance = max(i.normal.z, 0.5);
-                    float hAlpha = i.tangent.x;
-                    float sAlpha = i.tangent.y;
-                    float bAngle = i.tangent.z;
-                    
-                    float2 bDir = float2(cos(bAngle), sin(bAngle));
-                    float d1 = GetBasicSDF(noiseP + bDir * distance, halfSize, shapeType, customSmoothing, i.shapeParams) + internalPadding;
-                    float d2 = GetBasicSDF(noiseP - bDir * distance, halfSize, shapeType, customSmoothing, i.shapeParams) + internalPadding;
-                    
-                    float diff = d1 - d2;
-                    float bVal = diff / (distance * 2.0); 
-                    
-                    float highlight = saturate(bVal) * hAlpha;
-                    float shadow = saturate(-bVal) * sAlpha;
-                    
-                    float baseMask = smoothstep(aa, -aa, d);
+                    float dist = max(i.normal.z, 0.5);
+                    float2 bDir = float2(cos(i.tangent.z), sin(i.tangent.z));
+                    float diff = GetBasicSDF(p_orig + noiseOffset + bDir * dist, halfSize, shapeType, customSmoothing, i.shapeParams) - 
+                                 GetBasicSDF(p_orig + noiseOffset - bDir * dist, halfSize, shapeType, customSmoothing, i.shapeParams);
+                    float highlight = saturate(diff / (dist * 2.0)) * i.tangent.x;
+                    float shadow = saturate(-diff / (dist * 2.0)) * i.tangent.y;
+                    float baseMask = smoothstep(aa, -aa, d_orig);
                     if (baseMask <= 0.001) discard;
-                    
-                    float4 bColor = float4(1,1,1, highlight);
-                    if (shadow > highlight) bColor = float4(0,0,0, shadow);
-                    
-                    finalColor = bColor;
+                    finalColor = (shadow > highlight) ? float4(0,0,0, shadow) : float4(1,1,1, highlight);
                     mask = baseMask;
                 }
                 
-                finalColor.a *= mask;
-                finalColor.a *= maskFillAlpha; 
+                finalColor.a *= mask; 
                 finalColor.rgb *= finalColor.a;
 
                 #ifdef UNITY_UI_CLIP_RECT
