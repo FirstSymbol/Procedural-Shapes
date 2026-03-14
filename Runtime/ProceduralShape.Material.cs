@@ -94,7 +94,7 @@ namespace ProceduralShapes.Runtime
                 Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
                 
                 Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
-                Matrix4x4 maskRotateToSDF = Matrix4x4.Rotate(Quaternion.Euler(0, 0, -maskS.ShapeRotation));
+                Matrix4x4 maskRotateToSDF = Matrix4x4.identity; // Rotation removed
                 
                 Matrix4x4 localToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal * childLocalToWorld;
 
@@ -342,7 +342,7 @@ namespace ProceduralShapes.Runtime
             
             float maskWorldRot = m_CachedMask.Shape.transform.eulerAngles.z;
             float otherWorldRot = otherRect.eulerAngles.z;
-            float relativeRotation = otherWorldRot - maskWorldRot - m_CachedMask.Shape.ShapeRotation + shape.ShapeRotation;
+            float relativeRotation = otherWorldRot - maskWorldRot;
 
             m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             m_MaskShaderShapeParams[index] = shape.GetPackedShapeParams();

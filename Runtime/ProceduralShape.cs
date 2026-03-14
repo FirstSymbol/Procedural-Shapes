@@ -45,9 +45,6 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        [Tooltip("Rotation of the shape geometry in degrees.")]
-        [SerializeField] private float m_ShapeRotation = 0f;
-        
         [Tooltip("Pivot of the shape geometry relative to the RectTransform center. (0.5, 0.5) is centered.")]
         [SerializeField] private Vector2 m_ShapePivot = new Vector2(0.5f, 0.5f);
 
@@ -162,12 +159,6 @@ namespace ProceduralShapes.Runtime
             set { if (m_LinkScale != value) { m_LinkScale = value; SetAllDirty(); } }
         }
 
-        public float ShapeRotation
-        {
-            get => m_ShapeRotation;
-            set { if (Mathf.Abs(m_ShapeRotation - value) > 0.0001f) { m_ShapeRotation = value; SetAllDirty(); } }
-        }
-        
         public Vector2 ShapePivot
         {
             get => m_ShapePivot;

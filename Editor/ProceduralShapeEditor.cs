@@ -15,7 +15,6 @@ namespace ProceduralShapes.Editor
         private SerializedProperty m_ShapeScale2D;
         private SerializedProperty m_LinkScale;
         private SerializedProperty m_ShapePivot;
-        private SerializedProperty m_ShapeRotation;
         private SerializedProperty m_ShapeType, m_CornerRadius, m_CornerSmoothing;
         private SerializedProperty m_PolygonSides, m_PolygonRounding; // Rotation removed
         private SerializedProperty m_StarPoints, m_StarRatio, m_StarRoundingOuter, m_StarRoundingInner; // Rotation removed
@@ -34,7 +33,6 @@ namespace ProceduralShapes.Editor
             m_ShapeScale2D = serializedObject.FindProperty("m_ShapeScale2D");
             m_LinkScale = serializedObject.FindProperty("m_LinkScale");
             m_ShapePivot = serializedObject.FindProperty("m_ShapePivot");
-            m_ShapeRotation = serializedObject.FindProperty("m_ShapeRotation"); // Added
             
             m_ShapeType = serializedObject.FindProperty("m_ShapeType");
             m_CornerRadius = serializedObject.FindProperty("m_CornerRadius");
@@ -119,7 +117,6 @@ namespace ProceduralShapes.Editor
                 }
                 EditorGUILayout.EndHorizontal();
 
-                EditorGUILayout.PropertyField(m_ShapeRotation, new GUIContent("Shape Rotation", "Rotation of the shape geometry in degrees."));
                 EditorGUILayout.PropertyField(m_ShapePivot, new GUIContent("Shape Pivot", "Geometric pivot relative to RectTransform center. (0.5, 0.5) is centered."));
                 EditorGUILayout.Space(5);
 
@@ -344,7 +341,7 @@ namespace ProceduralShapes.Editor
 
             for (int i = 0; i < segments; i++)
             {
-                float angle = (i * angleStep + shape.ShapeRotation) * Mathf.Deg2Rad;
+                float angle = (i * angleStep) * Mathf.Deg2Rad;
                 float r = 1f;
                 if (shape.m_ShapeType == ShapeType.Star && (i % 2 != 0)) r = shape.m_StarRatio;
 
@@ -370,7 +367,7 @@ namespace ProceduralShapes.Editor
             EditorGUI.BeginChangeCheck();
 
             // Матрица трансформации: от координат фигуры к мировому пространству
-            Matrix4x4 geomMatrix = rt.localToWorldMatrix * Matrix4x4.Translate((Vector3)rt.rect.center + (Vector3)pivotOffset) * Matrix4x4.Rotate(Quaternion.Euler(0, 0, -shape.ShapeRotation));
+            Matrix4x4 geomMatrix = rt.localToWorldMatrix * Matrix4x4.Translate((Vector3)rt.rect.center + (Vector3)pivotOffset);
 
             using (new Handles.DrawingScope(geomMatrix))
             {

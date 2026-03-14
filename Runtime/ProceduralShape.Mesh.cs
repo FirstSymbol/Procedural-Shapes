@@ -66,21 +66,21 @@ namespace ProceduralShapes.Runtime
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is DropShadowEffect shadow && shadow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, m_ShapeRotation * Mathf.Deg2Rad, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, 0, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is OuterGlowEffect glow && glow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, m_ShapeRotation * Mathf.Deg2Rad, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, 0, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
 
-            DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, m_MainFillAtlasIndex, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, m_ShapeRotation * Mathf.Deg2Rad, MainFill.GradientOffset.x, MainFill.GradientOffset.y), maxExpand);
+            DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, m_MainFillAtlasIndex, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y), maxExpand);
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerShadowEffect inner && inner.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, m_ShapeRotation * Mathf.Deg2Rad, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, 0, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerGlowEffect iglow && iglow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, m_ShapeRotation * Mathf.Deg2Rad, iglow.Fill.GradientOffset.x, iglow.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, 0, iglow.Fill.GradientOffset.x, iglow.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is StrokeEffect stroke && stroke.Enabled)
@@ -88,7 +88,7 @@ namespace ProceduralShapes.Runtime
             
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is BlurEffect blur && blur.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 4, m_EffectAtlasIndices[i], blur.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(blur.Radius, m_ShapeRotation * Mathf.Deg2Rad, blur.Fill.GradientOffset.x, blur.Fill.GradientOffset.y));
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 4, m_EffectAtlasIndices[i], blur.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(blur.Radius, 0, blur.Fill.GradientOffset.x, blur.Fill.GradientOffset.y));
 
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is BevelEffect bevel && bevel.Enabled)
@@ -137,11 +137,10 @@ namespace ProceduralShapes.Runtime
             vh.AddVert(vert);
 
             float angleStep = 360f / segments;
-            float rotOffset = m_ShapeRotation;
 
             for (int i = 0; i <= segments; i++)
             {
-                float angle = (i * angleStep + rotOffset) * Mathf.Deg2Rad;
+                float angle = (i * angleStep) * Mathf.Deg2Rad;
                 float s = Mathf.Sin(angle);
                 float c = Mathf.Cos(angle);
                 

@@ -12,14 +12,6 @@ namespace ProceduralShapes.Runtime
             Vector2 pivotOffset = GetGeometricCenterOffset();
             Vector2 p = localPoint - (rectTransform.rect.center + pivotOffset);
 
-            if (Mathf.Abs(m_ShapeRotation) > 0.001f)
-            {
-                float angle = -m_ShapeRotation * Mathf.Deg2Rad;
-                float s = Mathf.Sin(angle);
-                float c = Mathf.Cos(angle);
-                p = new Vector2(p.x * c - p.y * s, p.x * s + p.y * c);
-            }
-
             Vector2 halfSize = rectTransform.rect.size * 0.5f * m_ShapeScale2D;
             float d = SDFMathUtils.GetSDF_CPU(p, halfSize, m_ShapeType, m_CornerSmoothing, GetPackedShapeParams());
             d += m_InternalPadding;
