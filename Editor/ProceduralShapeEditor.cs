@@ -1,7 +1,11 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
+using UnityEditor.UIElements;
 using ProceduralShapes.Runtime;
+using System.Collections.Generic;
+using System;
 
 namespace ProceduralShapes.Editor
 {
@@ -9,19 +13,16 @@ namespace ProceduralShapes.Editor
     [CanEditMultipleObjects]
     public class ProceduralShapeEditor : UnityEditor.UI.GraphicEditor
     {
+        private VisualTreeAsset m_VisualTree;
+        private StyleSheet m_StyleSheet;
+
+        private VisualElement m_BooleanListContainer;
+        private VisualElement m_EffectsListContainer;
+        private VisualElement m_SpecificContainer;
+
         private SerializedProperty m_DisableRendering;
-        private SerializedProperty m_EdgeSoftness;
-        private SerializedProperty m_InternalPadding;
-        private SerializedProperty m_ShapeScale2D;
-        private SerializedProperty m_LinkScale;
-        private SerializedProperty m_ShapePivot;
-        private SerializedProperty m_ShapeType, m_CornerRadius, m_CornerSmoothing;
-        private SerializedProperty m_PolygonSides, m_PolygonRounding; // Rotation removed
-        private SerializedProperty m_StarPoints, m_StarRatio, m_StarRoundingOuter, m_StarRoundingInner; // Rotation removed
-        private SerializedProperty m_CapsuleRounding;
-        private SerializedProperty m_LineStart, m_LineEnd, m_LineWidth;
-        private SerializedProperty m_RingInnerRadius, m_RingStartAngle, m_RingEndAngle;
-        private SerializedProperty m_ShapePath;
+        private SerializedProperty m_EdgeSoftness, m_InternalPadding;
+        private SerializedProperty m_ShapeScale2D, m_LinkScale, m_ShapePivot, m_ShapeType;
         private SerializedProperty m_MainFill, m_BooleanOperations, m_Effects;
 
         protected override void OnEnable()
@@ -33,292 +34,580 @@ namespace ProceduralShapes.Editor
             m_ShapeScale2D = serializedObject.FindProperty("m_ShapeScale2D");
             m_LinkScale = serializedObject.FindProperty("m_LinkScale");
             m_ShapePivot = serializedObject.FindProperty("m_ShapePivot");
-            
             m_ShapeType = serializedObject.FindProperty("m_ShapeType");
-            m_CornerRadius = serializedObject.FindProperty("m_CornerRadius");
-            m_CornerSmoothing = serializedObject.FindProperty("m_CornerSmoothing");
-            
-            m_PolygonSides = serializedObject.FindProperty("m_PolygonSides");
-            m_PolygonRounding = serializedObject.FindProperty("m_PolygonRounding");
-
-            m_StarPoints = serializedObject.FindProperty("m_StarPoints");
-            m_StarRatio = serializedObject.FindProperty("m_StarRatio");
-            m_StarRoundingOuter = serializedObject.FindProperty("m_StarRoundingOuter");
-            m_StarRoundingInner = serializedObject.FindProperty("m_StarRoundingInner");
-
-            m_CapsuleRounding = serializedObject.FindProperty("m_CapsuleRounding");
-            m_LineStart = serializedObject.FindProperty("m_LineStart");
-            m_LineEnd = serializedObject.FindProperty("m_LineEnd");
-            m_LineWidth = serializedObject.FindProperty("m_LineWidth");
-
-            m_RingInnerRadius = serializedObject.FindProperty("m_RingInnerRadius");
-            m_RingStartAngle = serializedObject.FindProperty("m_RingStartAngle");
-            m_RingEndAngle = serializedObject.FindProperty("m_RingEndAngle");
-
-            m_ShapePath = serializedObject.FindProperty("m_ShapePath");
-
             m_MainFill = serializedObject.FindProperty("MainFill");
             m_BooleanOperations = serializedObject.FindProperty("BooleanOperations");
             m_Effects = serializedObject.FindProperty("Effects");
+
+            m_VisualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Assets/_ProjectContent/GitPlugins/ProceduralShapes/Editor/UI/ProceduralShapeEditor.uxml");
+            m_StyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Assets/_ProjectContent/GitPlugins/ProceduralShapes/Editor/UI/ProceduralShapeEditorStyle.uss");
         }
 
-        public override void OnInspectorGUI()
+        public override VisualElement CreateInspectorGUI()
         {
-            serializedObject.Update();
+            if (m_VisualTree == null) return base.CreateInspectorGUI();
 
-            GUIStyle titleStyle = new GUIStyle(EditorStyles.boldLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 15 };
-            GUIStyle sectionTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 13 };
+            VisualElement root = new VisualElement();
+            m_VisualTree.CloneTree(root);
+            if (m_StyleSheet != null) root.styleSheets.Add(m_StyleSheet);
 
-            EditorGUILayout.Space(10);
-            EditorGUILayout.LabelField("🎨 Procedural Shape", titleStyle);
-            EditorGUILayout.Space(5);
-            
-            // --- DISABLE RENDERING TOGGLE ---
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            EditorGUILayout.PropertyField(m_DisableRendering, new GUIContent("Disable Rendering", "If checked, this shape won't be drawn but can still be used as a Cutter for other shapes."));
-            EditorGUILayout.EndVertical();
-            
-            EditorGUILayout.Space(5);
+            m_BooleanListContainer = root.Q<VisualElement>("boolean-list-container");
+            m_EffectsListContainer = root.Q<VisualElement>("effects-list-container");
+            m_SpecificContainer = root.Q<VisualElement>("shape-specific-params");
 
-            // --- БЛОК 1: SHAPE ---
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            GUILayout.Space(5);
-            EditorGUILayout.LabelField("1. Geometry", sectionTitle);
-            GUILayout.Space(5);
-
-            EditorGUILayout.PropertyField(m_ShapeType);
-            
-            bool isNone = (m_ShapeType.enumValueIndex == (int)ShapeType.None);
-
-            if (!isNone)
-            {
-                EditorGUILayout.BeginHorizontal();
+            // 1. Link Scale Logic
+            Button linkButton = root.Q<Button>("link-scale-button");
+            UpdateLinkScaleIcon(linkButton);
+            linkButton.clicked += () => {
+                m_LinkScale.boolValue = !m_LinkScale.boolValue;
                 if (m_LinkScale.boolValue)
                 {
-                    EditorGUI.BeginChangeCheck();
-                    float newScale = EditorGUILayout.FloatField(new GUIContent("Shape Scale", "Uniform scale factor for the shape inside the RectTransform bounds."), m_ShapeScale2D.vector2Value.x);
-                    if (EditorGUI.EndChangeCheck())
+                    m_ShapeScale2D.vector2Value = new Vector2(m_ShapeScale2D.vector2Value.x, m_ShapeScale2D.vector2Value.x);
+                }
+                serializedObject.ApplyModifiedProperties();
+                UpdateLinkScaleIcon(linkButton);
+            };
+
+            PropertyField scaleField = root.Q<PropertyField>("scale-field");
+            scaleField.RegisterValueChangeCallback(evt => {
+                if (m_LinkScale.boolValue)
+                {
+                    serializedObject.Update(); // Ensure we have latest
+                    Vector2 val = m_ShapeScale2D.vector2Value;
+                    if (Mathf.Abs(val.x - val.y) > 0.001f)
                     {
-                        m_ShapeScale2D.vector2Value = new Vector2(newScale, newScale);
+                        m_ShapeScale2D.vector2Value = new Vector2(val.x, val.x);
+                        serializedObject.ApplyModifiedProperties();
                     }
                 }
-                else
-                {
-                    EditorGUILayout.PropertyField(m_ShapeScale2D, new GUIContent("Shape Scale", "Scale factor for the shape inside the RectTransform bounds."));
-                }
-                
-                if (GUILayout.Button(m_LinkScale.boolValue ? "🔗" : "🔓", GUILayout.Width(30)))
-                {
-                    m_LinkScale.boolValue = !m_LinkScale.boolValue;
-                    if (m_LinkScale.boolValue)
-                    {
-                        m_ShapeScale2D.vector2Value = new Vector2(m_ShapeScale2D.vector2Value.x, m_ShapeScale2D.vector2Value.x);
-                    }
-                }
-                EditorGUILayout.EndHorizontal();
+            });
 
-                EditorGUILayout.PropertyField(m_ShapePivot, new GUIContent("Shape Pivot", "Geometric pivot relative to RectTransform center. (0.5, 0.5) is centered."));
-                EditorGUILayout.Space(5);
+            // 2. Shape Specific Params
+            root.TrackPropertyValue(m_ShapeType, (prop) => RefreshShapeSpecificParams());
+            RefreshShapeSpecificParams();
 
-                if (m_ShapeType.enumValueIndex == (int)ShapeType.Rectangle)
-                {
-                    EditorGUILayout.LabelField("Corner Radii", EditorStyles.boldLabel);
-                    
-                    Vector4 c = m_CornerRadius.vector4Value;
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label("TL", GUILayout.Width(20)); c.x = EditorGUILayout.FloatField(c.x);
-                    GUILayout.Label("TR", GUILayout.Width(20)); c.y = EditorGUILayout.FloatField(c.y);
-                    GUILayout.EndHorizontal();
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label("BL", GUILayout.Width(20)); c.w = EditorGUILayout.FloatField(c.w);
-                    GUILayout.Label("BR", GUILayout.Width(20)); c.z = EditorGUILayout.FloatField(c.z);
-                    GUILayout.EndHorizontal();
-                    m_CornerRadius.vector4Value = c;
-
-                    EditorGUILayout.PropertyField(m_CornerSmoothing);
-                }
-                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Polygon)
-                {
-                    EditorGUILayout.PropertyField(m_PolygonSides);
-                    EditorGUILayout.PropertyField(m_PolygonRounding);
-                    // Rotation removed
-                }
-                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Star)
-                {
-                    EditorGUILayout.PropertyField(m_StarPoints);
-                    EditorGUILayout.PropertyField(m_StarRatio);
-                    // Rotation removed
-                    EditorGUILayout.PropertyField(m_StarRoundingOuter);
-                    EditorGUILayout.PropertyField(m_StarRoundingInner);
-                }
-                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Capsule)
-                {
-                    EditorGUILayout.PropertyField(m_CapsuleRounding);
-                }
-                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Line)
-                {
-                    EditorGUILayout.PropertyField(m_LineStart);
-                    EditorGUILayout.PropertyField(m_LineEnd);
-                    EditorGUILayout.PropertyField(m_LineWidth);
-                }
-                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Ring)
-                {
-                    EditorGUILayout.PropertyField(m_RingInnerRadius);
-                    EditorGUILayout.PropertyField(m_RingStartAngle);
-                    EditorGUILayout.PropertyField(m_RingEndAngle);
-                }
-                else if (m_ShapeType.enumValueIndex == (int)ShapeType.Path)
-                {
-                    EditorGUI.BeginChangeCheck();
-                    EditorGUILayout.PropertyField(m_ShapePath, true);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        foreach (var targetObj in targets)
-                        {
-                            var shape = targetObj as ProceduralShape;
-                            if (shape != null)
-                            {
-                                shape.m_FlattenedPath.Clear();
-                                shape.SetAllDirty();
-                            }
-                        }
-                    }
-                }
-            }
-            
-            EditorGUILayout.Space(5);
-            EditorGUILayout.PropertyField(m_InternalPadding, new GUIContent("Internal Padding (Offset)"));
-            EditorGUILayout.PropertyField(m_EdgeSoftness, new GUIContent("Edge Softness (AA)"));
-
-            GUILayout.Space(5);
-            EditorGUILayout.EndVertical();
-
-            // --- БЛОК 2: BOOLEAN OPERATIONS ---
-            EditorGUILayout.Space(5);
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            GUILayout.Space(5);
-            
-            GUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("2. Boolean Operations", sectionTitle);
-            if (GUILayout.Button("+", GUILayout.Width(30)))
-            {
+            // 3. Lists
+            RefreshBooleanList();
+            root.Q<Button>("add-boolean-button").clicked += () => {
                 m_BooleanOperations.InsertArrayElementAtIndex(m_BooleanOperations.arraySize);
+                serializedObject.ApplyModifiedProperties();
+                RefreshBooleanList();
+            };
+
+            RefreshEffectsList();
+            root.Q<Button>("add-effect-button").clicked += ShowEffectMenu;
+
+            // 4. Tools
+            root.Q<Button>("bake-collider-button").clicked += () => BakeToCollider((ProceduralShape)target);
+
+            // 5. Raycast Controls
+            root.Q<VisualElement>("raycast-controls").Add(new IMGUIContainer(() => RaycastControlsGUI()));
+
+            // CRITICAL: Bind the root to the serialized object
+            root.Bind(serializedObject);
+
+            return root;
+        }
+
+        private void UpdateLinkScaleIcon(Button btn)
+        {
+            btn.text = m_LinkScale.boolValue ? "🔗" : "🔓";
+            btn.style.color = m_LinkScale.boolValue ? new Color(0.3f, 0.6f, 1f) : Color.white;
+        }
+
+        private void RefreshShapeSpecificParams()
+        {
+            if (m_SpecificContainer == null) return;
+            m_SpecificContainer.Clear();
+            
+            serializedObject.Update();
+            ShapeType type = (ShapeType)m_ShapeType.enumValueIndex;
+            if (type == ShapeType.None) return;
+
+            switch (type)
+            {
+                case ShapeType.Rectangle:
+                    m_SpecificContainer.Add(new Label("Corner Radii") { style = { unityFontStyleAndWeight = FontStyle.Bold, marginBottom = 4 } });
+                    VisualElement grid = new VisualElement() { style = { flexDirection = FlexDirection.Row, flexWrap = Wrap.Wrap, justifyContent = Justify.SpaceBetween } };
+                    
+                    SerializedProperty radiusProp = serializedObject.FindProperty("m_CornerRadius");
+                    grid.Add(CreateCompactFieldFromProp(radiusProp.FindPropertyRelative("x"), "TL"));
+                    grid.Add(CreateCompactFieldFromProp(radiusProp.FindPropertyRelative("y"), "TR"));
+                    grid.Add(CreateCompactFieldFromProp(radiusProp.FindPropertyRelative("w"), "BL"));
+                    grid.Add(CreateCompactFieldFromProp(radiusProp.FindPropertyRelative("z"), "BR"));
+                    
+                    m_SpecificContainer.Add(grid);
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_CornerSmoothing"), "Smoothing"));
+                    break;
+                case ShapeType.Polygon:
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_PolygonSides"), "Sides"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_PolygonRounding"), "Rounding"));
+                    break;
+                case ShapeType.Star:
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_StarPoints"), "Points"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_StarRatio"), "Inner Ratio"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_StarRoundingOuter"), "Outer Rounding"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_StarRoundingInner"), "Inner Rounding"));
+                    break;
+                case ShapeType.Capsule:
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_CapsuleRounding"), "Rounding"));
+                    break;
+                case ShapeType.Line:
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_LineStart"), "Start Point"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_LineEnd"), "End Point"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_LineWidth"), "Width"));
+                    break;
+                case ShapeType.Ring:
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_RingInnerRadius"), "Inner Radius"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_RingStartAngle"), "Start Angle"));
+                    m_SpecificContainer.Add(new PropertyField(serializedObject.FindProperty("m_RingEndAngle"), "End Angle"));
+                    break;
+                case ShapeType.Path:
+                    PropertyField pathField = new PropertyField(serializedObject.FindProperty("m_ShapePath"), "Vector Path");
+                    pathField.RegisterValueChangeCallback(evt => {
+                        foreach (var targetObj in targets) {
+                            var shape = targetObj as ProceduralShape;
+                            if (shape != null) { shape.m_FlattenedPath.Clear(); shape.SetAllDirty(); }
+                        }
+                    });
+                    m_SpecificContainer.Add(pathField);
+                    break;
+                default:
+                    m_SpecificContainer.Add(new Label("No specific parameters for this shape type.") { 
+                        style = { opacity = 0.5f, unityFontStyleAndWeight = FontStyle.Italic, marginTop = 4, alignSelf = Align.Center } 
+                    });
+                    break;
             }
-            GUILayout.EndHorizontal();
-            GUILayout.Space(5);
+            
+            // Re-bind specific container to ensure new fields are connected
+            m_SpecificContainer.Bind(serializedObject);
+        }
+
+        private VisualElement CreateCompactFieldFromProp(SerializedProperty prop, string label)
+        {
+            VisualElement row = new VisualElement() { style = { flexDirection = FlexDirection.Row, width = Length.Percent(48), marginBottom = 4 } };
+            row.Add(new Label(label) { style = { width = 25, unityTextAlign = TextAnchor.MiddleLeft, fontSize = 10, opacity = 0.8f } });
+            PropertyField field = new PropertyField(prop, "");
+            field.style.flexGrow = 1;
+            row.Add(field);
+            return row;
+        }
+
+        private void RefreshBooleanList()
+        {
+            if (m_BooleanListContainer == null) return;
+            m_BooleanListContainer.Clear();
+            serializedObject.Update();
 
             for (int i = 0; i < m_BooleanOperations.arraySize; i++)
             {
+                int index = i;
                 SerializedProperty item = m_BooleanOperations.GetArrayElementAtIndex(i);
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
                 
-                // Header Row with Reorder Buttons
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField($"Op {i + 1}", EditorStyles.boldLabel, GUILayout.Width(40));
-                
-                GUILayout.FlexibleSpace();
-                
-                // UP Button
-                EditorGUI.BeginDisabledGroup(i == 0);
-                if (GUILayout.Button("▲", GUILayout.Width(20)))
-                {
-                    m_BooleanOperations.MoveArrayElement(i, i - 1);
-                    EditorGUI.EndDisabledGroup();
-                    EditorGUILayout.EndHorizontal();
-                    EditorGUILayout.EndVertical();
-                    break; 
-                }
-                EditorGUI.EndDisabledGroup();
+                VisualElement itemRoot = new VisualElement() { name = "bool-item-" + i };
+                itemRoot.AddToClassList("ps-list-item");
 
-                // DOWN Button
-                EditorGUI.BeginDisabledGroup(i == m_BooleanOperations.arraySize - 1);
-                if (GUILayout.Button("▼", GUILayout.Width(20)))
-                {
-                    m_BooleanOperations.MoveArrayElement(i, i + 1);
-                    EditorGUI.EndDisabledGroup();
-                    EditorGUILayout.EndHorizontal();
-                    EditorGUILayout.EndVertical();
-                    break; 
-                }
-                EditorGUI.EndDisabledGroup();
+                VisualElement header = new VisualElement() { name = "header" };
+                header.AddToClassList("ps-list-item-header");
+                header.Add(new Label($"Op {i + 1}") { style = { unityFontStyleAndWeight = FontStyle.Bold, flexGrow = 1 } });
 
-                // REMOVE Button
-                if (GUILayout.Button("X", GUILayout.Width(25)))
-                {
-                    m_BooleanOperations.DeleteArrayElementAtIndex(i);
-                    EditorGUILayout.EndHorizontal();
-                    EditorGUILayout.EndVertical();
-                    break; 
-                }
-                EditorGUILayout.EndHorizontal();
+                header.Add(CreateIconButton("▲", () => MoveListElement(m_BooleanOperations, index, -1, RefreshBooleanList), index > 0));
+                header.Add(CreateIconButton("▼", () => MoveListElement(m_BooleanOperations, index, 1, RefreshBooleanList), index < m_BooleanOperations.arraySize - 1));
+                header.Add(CreateIconButton("✕", () => {
+                    m_BooleanOperations.DeleteArrayElementAtIndex(index);
+                    serializedObject.ApplyModifiedProperties();
+                    RefreshBooleanList();
+                }));
 
-                EditorGUILayout.PropertyField(item.FindPropertyRelative("Operation"));
-                EditorGUILayout.PropertyField(item.FindPropertyRelative("SourceShape"));
-                EditorGUILayout.PropertyField(item.FindPropertyRelative("Smoothness"));
-                
-                EditorGUILayout.EndVertical();
-                GUILayout.Space(2);
+                itemRoot.Add(header);
+
+                VisualElement content = new VisualElement() { name = "content" };
+                content.AddToClassList("ps-list-item-content");
+                content.Add(new PropertyField(item.FindPropertyRelative("Operation")));
+                content.Add(new PropertyField(item.FindPropertyRelative("SourceShape")));
+                content.Add(new PropertyField(item.FindPropertyRelative("Smoothness")));
+                itemRoot.Add(content);
+
+                m_BooleanListContainer.Add(itemRoot);
             }
             
-            GUILayout.Space(5);
-            EditorGUILayout.EndVertical();
+            m_BooleanListContainer.Bind(serializedObject);
+        }
 
-            // --- БЛОК 3: FILL ---
-            EditorGUILayout.Space(5);
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            GUILayout.Space(5);
-            EditorGUILayout.LabelField("3. Fill & Color", sectionTitle);
-            GUILayout.Space(5);
-
-            EditorGUILayout.PropertyField(m_MainFill, true);
-            
-            GUILayout.Space(5);
-            RaycastControlsGUI(); 
-            GUILayout.Space(5);
-            EditorGUILayout.EndVertical();
-
-            // --- БЛОК 4: EFFECTS ---
-            EditorGUILayout.Space(5);
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            GUILayout.Space(5);
-            
-            GUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("4. Effects", sectionTitle);
-            if (GUILayout.Button("+", GUILayout.Width(30)))
-            {
-                GenericMenu menu = new GenericMenu();
-                menu.AddItem(new GUIContent("Drop Shadow"), false, () => AddEffect(new DropShadowEffect()));
-                menu.AddItem(new GUIContent("Inner Shadow"), false, () => AddEffect(new InnerShadowEffect()));
-                menu.AddItem(new GUIContent("Outer Glow"), false, () => AddEffect(new OuterGlowEffect()));
-                menu.AddItem(new GUIContent("Inner Glow"), false, () => AddEffect(new InnerGlowEffect()));
-                menu.AddItem(new GUIContent("Stroke"), false, () => AddEffect(new StrokeEffect()));
-                menu.AddItem(new GUIContent("Blur"), false, () => AddEffect(new BlurEffect()));
-                menu.AddItem(new GUIContent("Bevel (Fake 3D)"), false, () => AddEffect(new BevelEffect()));
-                menu.ShowAsContext();
-            }
-            GUILayout.EndHorizontal();
-            GUILayout.Space(5);
+        private void RefreshEffectsList()
+        {
+            if (m_EffectsListContainer == null) return;
+            m_EffectsListContainer.Clear();
+            serializedObject.Update();
 
             for (int i = 0; i < m_Effects.arraySize; i++)
             {
-                if (DrawEffectItem(m_Effects, i)) break;
-            }
-            GUILayout.Space(5);
-            EditorGUILayout.EndVertical();
+                int index = i;
+                SerializedProperty effectProp = m_Effects.GetArrayElementAtIndex(i);
+                SerializedProperty enabledProp = effectProp.FindPropertyRelative("Enabled");
 
-            // --- БЛОК 5: TOOLS ---
-            EditorGUILayout.Space(5);
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            EditorGUILayout.LabelField("5. Tools", sectionTitle);
-            if (GUILayout.Button("Bake to PolygonCollider2D"))
-            {
-                BakeToCollider((ProceduralShape)target);
-            }
-            EditorGUILayout.EndVertical();
+                string effectName = GetEffectDisplayName(effectProp.managedReferenceFullTypename);
 
-            if (serializedObject.ApplyModifiedProperties())
+                VisualElement itemRoot = new VisualElement();
+                itemRoot.AddToClassList("ps-list-item");
+
+                VisualElement header = new VisualElement();
+                header.AddToClassList("ps-list-item-header");
+
+                Toggle enabledToggle = new Toggle() { value = enabledProp.boolValue, style = { marginRight = 4 } };
+                enabledToggle.RegisterValueChangedCallback(evt => { 
+                    enabledProp.boolValue = evt.newValue; 
+                    serializedObject.ApplyModifiedProperties(); 
+                    ((ProceduralShape)target).SetAllDirty();
+                });
+                header.Add(enabledToggle);
+
+                header.Add(new Label(effectName) { style = { unityFontStyleAndWeight = FontStyle.Bold, flexGrow = 1 } });
+
+                header.Add(CreateIconButton("▲", () => MoveListElement(m_Effects, index, -1, RefreshEffectsList), index > 0));
+                header.Add(CreateIconButton("▼", () => MoveListElement(m_Effects, index, 1, RefreshEffectsList), index < m_Effects.arraySize - 1));
+                header.Add(CreateIconButton("✕", () => {
+                    m_Effects.DeleteArrayElementAtIndex(index);
+                    serializedObject.ApplyModifiedProperties();
+                    RefreshEffectsList();
+                }));
+
+                itemRoot.Add(header);
+
+                VisualElement content = new VisualElement();
+                content.AddToClassList("ps-list-item-content");
+                
+                SerializedProperty child = effectProp.Copy();
+                SerializedProperty end = effectProp.GetEndProperty();
+                if (child.NextVisible(true))
+                {
+                    do {
+                        if (SerializedProperty.EqualContents(child, end)) break;
+                        if (child.name == "Enabled") continue;
+                        if (child.name == "Fill") {
+                            content.Add(new Label("Effect Fill") { style = { unityFontStyleAndWeight = FontStyle.Bold, marginTop = 4 } });
+                            content.Add(new PropertyField(child));
+                        } else {
+                            content.Add(new PropertyField(child));
+                        }
+                    } while (child.NextVisible(false));
+                }
+
+                itemRoot.Add(content);
+                m_EffectsListContainer.Add(itemRoot);
+            }
+            
+            m_EffectsListContainer.Bind(serializedObject);
+        }
+
+        private string GetEffectDisplayName(string typeName)
+        {
+            if (typeName.Contains("DropShadow")) return "Drop Shadow";
+            if (typeName.Contains("InnerShadow")) return "Inner Shadow";
+            if (typeName.Contains("OuterGlow")) return "Outer Glow";
+            if (typeName.Contains("InnerGlow")) return "Inner Glow";
+            if (typeName.Contains("Stroke")) return "Stroke";
+            if (typeName.Contains("Blur")) return "Blur";
+            if (typeName.Contains("Bevel")) return "Bevel (3D)";
+            return "Effect";
+        }
+
+        private VisualElement CreateIconButton(string text, Action onClick, bool enabled = true)
+        {
+            Button btn = new Button(onClick) { text = text };
+            btn.AddToClassList("ps-icon-button");
+            btn.SetEnabled(enabled);
+            return btn;
+        }
+
+        private void MoveListElement(SerializedProperty list, int index, int dir, Action onDone)
+        {
+            list.MoveArrayElement(index, index + dir);
+            serializedObject.ApplyModifiedProperties();
+            onDone?.Invoke();
+        }
+
+        private void ShowEffectMenu()
+        {
+            GenericMenu menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Drop Shadow"), false, () => AddEffect(new DropShadowEffect()));
+            menu.AddItem(new GUIContent("Inner Shadow"), false, () => AddEffect(new InnerShadowEffect()));
+            menu.AddItem(new GUIContent("Outer Glow"), false, () => AddEffect(new OuterGlowEffect()));
+            menu.AddItem(new GUIContent("Inner Glow"), false, () => AddEffect(new InnerGlowEffect()));
+            menu.AddItem(new GUIContent("Stroke"), false, () => AddEffect(new StrokeEffect()));
+            menu.AddItem(new GUIContent("Blur"), false, () => AddEffect(new BlurEffect()));
+            menu.AddItem(new GUIContent("Bevel (Fake 3D)"), false, () => AddEffect(new BevelEffect()));
+            menu.ShowAsContext();
+        }
+
+        private void AddEffect(ProceduralEffect effect)
+        {
+            ProceduralShape shape = (ProceduralShape)target;
+            Undo.RecordObject(shape, "Add Effect");
+            shape.Effects.Add(effect);
+            serializedObject.Update();
+            EditorUtility.SetDirty(shape);
+            shape.SetAllDirty();
+            RefreshEffectsList();
+        }
+
+        // --- SCENE VIEW HANDLES ---
+
+        private void OnSceneGUI()
+        {
+            ProceduralShape shape = (ProceduralShape)target;
+            if (shape == null) return;
+
+            RectTransform rt = shape.rectTransform;
+            Vector2 size = rt.rect.size;
+            Vector2 pivotOffset = shape.GetGeometricCenterOffset();
+            float hw = size.x * 0.5f * shape.ShapeScale.x;
+            float hh = size.y * 0.5f * shape.ShapeScale.y;
+            
+            Matrix4x4 geomMatrix = rt.localToWorldMatrix * Matrix4x4.Translate((Vector3)rt.rect.center + (Vector3)pivotOffset);
+
+            using (new Handles.DrawingScope(geomMatrix))
             {
-                foreach (var t in targets) ((ProceduralShape)t).SetAllDirty();
+                if (shape.m_ShapeType == ShapeType.Rectangle)
+                {
+                    DrawRectangleHandles(shape, hw, hh);
+                }
+                else if (shape.m_ShapeType == ShapeType.Line)
+                {
+                    DrawLineHandles(shape, rt, geomMatrix);
+                }
+                else if (shape.m_ShapeType == ShapeType.Star)
+                {
+                    DrawStarHandles(shape, size);
+                }
+                else if (shape.m_ShapeType == ShapeType.Ring)
+                {
+                    DrawRingHandles(shape, size);
+                }
+                else if (shape.m_ShapeType == ShapeType.Path)
+                {
+                    DrawPathHandles(shape, geomMatrix);
+                }
+
+                DrawGradientHandles(shape, hw, hh);
+            }
+        }
+
+        private void DrawRectangleHandles(ProceduralShape shape, float hw, float hh)
+        {
+            Vector4 radii = shape.m_CornerRadius;
+            EditorGUI.BeginChangeCheck();
+
+            Handles.color = Color.cyan;
+            radii.y = ModernHandle(new Vector3(hw, hh, 0), new Vector3(-1, -1, 0), radii.y, "TR", hw, hh, Color.cyan);
+            radii.x = ModernHandle(new Vector3(-hw, hh, 0), new Vector3(1, -1, 0), radii.x, "TL", hw, hh, Color.cyan);
+            radii.z = ModernHandle(new Vector3(hw, -hh, 0), new Vector3(-1, 1, 0), radii.z, "BR", hw, hh, Color.cyan);
+            radii.w = ModernHandle(new Vector3(-hw, -hh, 0), new Vector3(1, 1, 0), radii.w, "BL", hw, hh, Color.cyan);
+
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(shape, "Change Corner Radii");
+                shape.m_CornerRadius = radii;
+                shape.SetAllDirty();
+            }
+        }
+
+        private float ModernHandle(Vector3 corner, Vector3 dir, float radius, string label, float hw, float hh, Color color)
+        {
+            Vector3 pos = corner + dir.normalized * radius;
+            float size = HandleUtility.GetHandleSize(pos) * 0.05f;
+            
+            Handles.color = new Color(color.r, color.g, color.b, 0.3f);
+            Handles.DrawDottedLine(corner, pos, 2f);
+            
+            Handles.color = color;
+            Vector3 newPos = Handles.FreeMoveHandle(pos, size, Vector3.zero, ModernHandleCap);
+            
+            float newRadius = Mathf.Clamp(Vector3.Distance(corner, newPos), 0, Mathf.Min(hw, hh));
+            
+            if (newRadius > 5f) {
+                GUIStyle style = new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = color } };
+                Handles.Label(pos + dir * 10f, $"{label}: {newRadius:F0}", style);
+            }
+            
+            return newRadius;
+        }
+
+        private void DrawLineHandles(ProceduralShape shape, RectTransform rt, Matrix4x4 geomMatrix)
+        {
+            Matrix4x4 rtToGeom = geomMatrix.inverse * rt.localToWorldMatrix;
+            Vector3 start = rtToGeom.MultiplyPoint3x4(shape.m_LineStart);
+            Vector3 end = rtToGeom.MultiplyPoint3x4(shape.m_LineEnd);
+            
+            EditorGUI.BeginChangeCheck();
+            Handles.color = Color.white;
+            start = Handles.FreeMoveHandle(start, HandleUtility.GetHandleSize(start) * 0.08f, Vector3.zero, ModernHandleCap);
+            end = Handles.FreeMoveHandle(end, HandleUtility.GetHandleSize(end) * 0.08f, Vector3.zero, ModernHandleCap);
+            
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(shape, "Move Line Points");
+                shape.m_LineStart = rt.worldToLocalMatrix.MultiplyPoint3x4(geomMatrix.MultiplyPoint3x4(start));
+                shape.m_LineEnd = rt.worldToLocalMatrix.MultiplyPoint3x4(geomMatrix.MultiplyPoint3x4(end));
+                shape.SetAllDirty();
+            }
+        }
+
+        private void DrawStarHandles(ProceduralShape shape, Vector2 size)
+        {
+            float dist = (size.x * 0.5f) * shape.m_StarRatio * shape.ShapeScale.x;
+            Vector3 handlePos = new Vector3(dist, 0, 0);
+            
+            EditorGUI.BeginChangeCheck();
+            Handles.color = new Color(1f, 0.5f, 0f); // Orange for ratio
+            handlePos = Handles.FreeMoveHandle(handlePos, HandleUtility.GetHandleSize(handlePos) * 0.08f, Vector3.zero, ModernHandleCap);
+            
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(shape, "Change Star Ratio");
+                shape.m_StarRatio = Mathf.Clamp01(handlePos.magnitude / (size.x * 0.5f * shape.ShapeScale.x));
+                shape.SetAllDirty();
+            }
+        }
+
+        private void DrawRingHandles(ProceduralShape shape, Vector2 size)
+        {
+            float dist = (size.x * 0.5f) * shape.m_RingInnerRadius * shape.ShapeScale.x;
+            Vector3 handlePos = new Vector3(0, dist, 0);
+            
+            EditorGUI.BeginChangeCheck();
+            Handles.color = Color.yellow;
+            handlePos = Handles.FreeMoveHandle(handlePos, HandleUtility.GetHandleSize(handlePos) * 0.08f, Vector3.zero, ModernHandleCap);
+            
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(shape, "Change Ring Inner Radius");
+                shape.m_RingInnerRadius = Mathf.Clamp01(handlePos.magnitude / (size.x * 0.5f * shape.ShapeScale.x));
+                shape.SetAllDirty();
+            }
+        }
+
+        private void DrawPathHandles(ProceduralShape shape, Matrix4x4 geomMatrix)
+        {
+            var path = shape.m_ShapePath;
+            if (path == null || path.Points == null) return;
+
+            for (int i = 0; i < path.Points.Count; i++)
+            {
+                var pt = path.Points[i];
+                Vector3 pos = pt.Position;
+                
+                EditorGUI.BeginChangeCheck();
+                Handles.color = Color.green;
+                Vector3 newPos = Handles.FreeMoveHandle(pos, HandleUtility.GetHandleSize(pos) * 0.08f, Vector3.zero, ModernHandleCap);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(shape, "Move Path Point");
+                    Vector2 delta = (Vector2)newPos - pt.Position;
+                    pt.Position = newPos;
+                    pt.ControlPoint1 += delta;
+                    pt.ControlPoint2 += delta;
+                    path.Points[i] = pt;
+                    shape.m_FlattenedPath.Clear();
+                    shape.SetAllDirty();
+                }
+
+                if (pt.Type == PathPointType.Bezier)
+                {
+                    Handles.color = new Color(1, 0.9f, 0);
+                    DrawControlPoint(ref pt.ControlPoint1, pos, shape, path, i, new Color(1, 0.8f, 0));
+                    DrawControlPoint(ref pt.ControlPoint2, pos, shape, path, i, new Color(1, 0.8f, 0));
+                    path.Points[i] = pt;
+                }
+            }
+        }
+
+        private void DrawControlPoint(ref Vector2 cp, Vector2 anchor, ProceduralShape shape, ShapePath path, int idx, Color color)
+        {
+            Handles.color = new Color(color.r, color.g, color.b, 0.5f);
+            Handles.DrawDottedLine(anchor, cp, 2f);
+            EditorGUI.BeginChangeCheck();
+            Handles.color = color;
+            Vector3 newCp = Handles.FreeMoveHandle(cp, HandleUtility.GetHandleSize(cp) * 0.05f, Vector3.zero, Handles.DotHandleCap);
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(shape, "Move Control Point");
+                cp = newCp;
+                shape.m_FlattenedPath.Clear();
+                shape.SetAllDirty();
+            }
+        }
+
+        private void DrawGradientHandles(ProceduralShape shape, float hw, float hh)
+        {
+            if (shape.MainFill.Type == FillType.Solid || shape.MainFill.Type == FillType.Pattern) return;
+
+            Color gradColor = new Color(1, 1, 0);
+            Vector2 offset = shape.MainFill.GradientOffset;
+            Vector3 center = new Vector3(offset.x * hw, offset.y * hh, 0);
+            
+            EditorGUI.BeginChangeCheck();
+            Handles.color = gradColor;
+            Vector3 newCenter = Handles.FreeMoveHandle(center, HandleUtility.GetHandleSize(center) * 0.1f, Vector3.zero, ModernHandleCap);
+            
+            float angleRad = shape.MainFill.GradientAngle * Mathf.Deg2Rad;
+            Vector3 dir = new Vector3(Mathf.Cos(angleRad), Mathf.Sin(angleRad), 0);
+            float scale = shape.MainFill.GradientScale * Mathf.Max(hw, hh);
+            
+            Vector3 anglePos = newCenter + dir * scale;
+            Vector3 newAnglePos = Handles.FreeMoveHandle(anglePos, HandleUtility.GetHandleSize(anglePos) * 0.08f, Vector3.zero, ModernHandleCap);
+            
+            Handles.color = new Color(gradColor.r, gradColor.g, gradColor.b, 0.4f);
+            Handles.DrawDottedLine(newCenter, newAnglePos, 2f);
+            
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(shape, "Change Gradient");
+                shape.MainFill.GradientOffset = new Vector2(newCenter.x / (hw == 0 ? 1 : hw), newCenter.y / (hh == 0 ? 1 : hh));
+                
+                Vector3 localDir = newAnglePos - newCenter;
+                shape.MainFill.GradientScale = Mathf.Max(0.01f, localDir.magnitude / Mathf.Max(hw, hh));
+                shape.MainFill.GradientAngle = Mathf.Atan2(localDir.y, localDir.x) * Mathf.Rad2Deg;
+                
+                shape.SetAllDirty();
+            }
+        }
+
+        private void ModernHandleCap(int controlID, Vector3 position, Quaternion rotation, float size, EventType eventType)
+        {
+            if (eventType == EventType.Layout)
+            {
+                HandleUtility.AddControl(controlID, HandleUtility.DistanceToCircle(position, size));
+                return;
+            }
+
+            if (eventType == EventType.Repaint)
+            {
+                Color baseColor = Handles.color;
+                bool isHover = HandleUtility.nearestControl == controlID;
+                bool isActive = GUIUtility.hotControl == controlID;
+
+                Color color = baseColor;
+                if (isActive) color = Color.white;
+                else if (isHover) color = Color.Lerp(baseColor, Color.white, 0.5f);
+
+                // Glow/Shadow
+                Handles.color = new Color(0, 0, 0, 0.4f);
+                Handles.DrawSolidDisc(position, Vector3.forward, size * 1.3f);
+                
+                // Outer Border
+                Handles.color = Color.black;
+                Handles.DrawSolidDisc(position, Vector3.forward, size);
+                
+                // Fill
+                Handles.color = color;
+                Handles.DrawSolidDisc(position, Vector3.forward, size * 0.75f);
+                
+                // Center Dot for more detail
+                Handles.color = Color.black;
+                Handles.DrawSolidDisc(position, Vector3.forward, size * 0.2f);
+
+                Handles.color = baseColor; // Restore
             }
         }
 
@@ -350,300 +639,6 @@ namespace ProceduralShapes.Editor
 
             collider.points = points;
             EditorUtility.SetDirty(collider);
-        }
-
-        private void OnSceneGUI()
-        {
-            ProceduralShape shape = (ProceduralShape)target;
-            if (shape == null) return;
-
-            RectTransform rt = shape.rectTransform;
-            Vector2 size = rt.rect.size;
-            Vector2 pivotOffset = shape.GetGeometricCenterOffset();
-            float hw = size.x * 0.5f * shape.ShapeScale.x;
-            float hh = size.y * 0.5f * shape.ShapeScale.y;
-            
-            Handles.color = Color.cyan;
-            EditorGUI.BeginChangeCheck();
-
-            // Матрица трансформации: от координат фигуры к мировому пространству
-            Matrix4x4 geomMatrix = rt.localToWorldMatrix * Matrix4x4.Translate((Vector3)rt.rect.center + (Vector3)pivotOffset);
-
-            using (new Handles.DrawingScope(geomMatrix))
-            {
-                if (shape.m_ShapeType == ShapeType.Rectangle)
-                {
-                    Vector4 radii = shape.m_CornerRadius;
-                    float handleSize = 0.05f;
-                    
-                    Vector3 trCorner = new Vector3(hw, hh, 0);
-                    Vector3 trPos = trCorner + new Vector3(-1, -1, 0).normalized * radii.y;
-                    trPos = Handles.FreeMoveHandle(trPos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(trPos)) * handleSize, Vector3.zero, Handles.SphereHandleCap);
-                    float newTr = Mathf.Clamp(Vector3.Distance(trCorner, trPos), 0, Mathf.Min(hw, hh));
-                    
-                    Vector3 tlCorner = new Vector3(-hw, hh, 0);
-                    Vector3 tlPos = tlCorner + new Vector3(1, -1, 0).normalized * radii.x;
-                    tlPos = Handles.FreeMoveHandle(tlPos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(tlPos)) * handleSize, Vector3.zero, Handles.SphereHandleCap);
-                    float newTl = Mathf.Clamp(Vector3.Distance(tlCorner, tlPos), 0, Mathf.Min(hw, hh));
-
-                    Vector3 brCorner = new Vector3(hw, -hh, 0);
-                    Vector3 brPos = brCorner + new Vector3(-1, 1, 0).normalized * radii.z;
-                    brPos = Handles.FreeMoveHandle(brPos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(brPos)) * handleSize, Vector3.zero, Handles.SphereHandleCap);
-                    float newBr = Mathf.Clamp(Vector3.Distance(brCorner, brPos), 0, Mathf.Min(hw, hh));
-
-                    Vector3 blCorner = new Vector3(-hw, -hh, 0);
-                    Vector3 blPos = blCorner + new Vector3(1, 1, 0).normalized * radii.w;
-                    blPos = Handles.FreeMoveHandle(blPos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(blPos)) * handleSize, Vector3.zero, Handles.SphereHandleCap);
-                    float newBl = Mathf.Clamp(Vector3.Distance(blCorner, blPos), 0, Mathf.Min(hw, hh));
-
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(shape, "Change Corner Radii");
-                        shape.m_CornerRadius = new Vector4(newTl, newTr, newBr, newBl);
-                        shape.SetAllDirty();
-                    }
-                }
-                else if (shape.m_ShapeType == ShapeType.Line)
-                {
-                    // Для линии используем geomMatrix.inverse, так как точки линии заданы в локальном пространстве RectTransform
-                    Matrix4x4 rtToGeom = geomMatrix.inverse * rt.localToWorldMatrix;
-                    Vector3 start = rtToGeom.MultiplyPoint3x4(shape.m_LineStart);
-                    Vector3 end = rtToGeom.MultiplyPoint3x4(shape.m_LineEnd);
-                    
-                    start = Handles.FreeMoveHandle(start, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(start)) * 0.1f, Vector3.zero, Handles.CircleHandleCap);
-                    end = Handles.FreeMoveHandle(end, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(end)) * 0.1f, Vector3.zero, Handles.CircleHandleCap);
-                    
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(shape, "Move Line Points");
-                        shape.m_LineStart = rt.worldToLocalMatrix.MultiplyPoint3x4(geomMatrix.MultiplyPoint3x4(start));
-                        shape.m_LineEnd = rt.worldToLocalMatrix.MultiplyPoint3x4(geomMatrix.MultiplyPoint3x4(end));
-                        shape.SetAllDirty();
-                    }
-                }
-                else if (shape.m_ShapeType == ShapeType.Star)
-                {
-                    float dist = (size.x * 0.5f) * shape.m_StarRatio * shape.ShapeScale.x;
-                    Vector3 handlePos = new Vector3(dist, 0, 0);
-                    handlePos = Handles.FreeMoveHandle(handlePos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(handlePos)) * 0.05f, Vector3.zero, Handles.DotHandleCap);
-                    
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(shape, "Change Star Ratio");
-                        shape.m_StarRatio = Mathf.Clamp01(handlePos.magnitude / (size.x * 0.5f * shape.ShapeScale.x));
-                        shape.SetAllDirty();
-                    }
-                }
-                else if (shape.m_ShapeType == ShapeType.Ring)
-                {
-                    float dist = (size.x * 0.5f) * shape.m_RingInnerRadius * shape.ShapeScale.x;
-                    Vector3 handlePos = new Vector3(0, dist, 0);
-                    handlePos = Handles.FreeMoveHandle(handlePos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(handlePos)) * 0.05f, Vector3.zero, Handles.DotHandleCap);
-                    
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(shape, "Change Ring Inner Radius");
-                        shape.m_RingInnerRadius = Mathf.Clamp01(handlePos.magnitude / (size.x * 0.5f * shape.ShapeScale.x));
-                        shape.SetAllDirty();
-                    }
-                }
-                else if (shape.m_ShapeType == ShapeType.Path)
-                {
-                    var path = shape.m_ShapePath;
-                    if (path != null && path.Points != null)
-                    {
-                        Handles.color = Color.green;
-                        for (int i = 0; i < path.Points.Count; i++)
-                        {
-                            var pt = path.Points[i];
-                            Vector3 pos = pt.Position;
-                            
-                            EditorGUI.BeginChangeCheck();
-                            Vector3 newPos = Handles.FreeMoveHandle(pos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(pos)) * 0.08f, Vector3.zero, Handles.CircleHandleCap);
-                            if (EditorGUI.EndChangeCheck())
-                            {
-                                Undo.RecordObject(shape, "Move Path Point");
-                                Vector2 delta = (Vector2)newPos - pt.Position;
-                                pt.Position = newPos;
-                                pt.ControlPoint1 += delta;
-                                pt.ControlPoint2 += delta;
-                                path.Points[i] = pt;
-                                shape.m_FlattenedPath.Clear();
-                                shape.SetAllDirty();
-                            }
-
-                            if (pt.Type == PathPointType.Bezier)
-                            {
-                                Handles.color = Color.yellow;
-                                Vector3 cp1 = pt.ControlPoint1;
-                                EditorGUI.BeginChangeCheck();
-                                Vector3 newCp1 = Handles.FreeMoveHandle(cp1, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(cp1)) * 0.06f, Vector3.zero, Handles.DotHandleCap);
-                                if (EditorGUI.EndChangeCheck())
-                                {
-                                    Undo.RecordObject(shape, "Move Control Point");
-                                    pt.ControlPoint1 = newCp1;
-                                    path.Points[i] = pt;
-                                    shape.m_FlattenedPath.Clear();
-                                    shape.SetAllDirty();
-                                }
-                                Handles.DrawDottedLine(pos, newCp1, 2f);
-
-                                Vector3 cp2 = pt.ControlPoint2;
-                                EditorGUI.BeginChangeCheck();
-                                Vector3 newCp2 = Handles.FreeMoveHandle(cp2, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(cp2)) * 0.06f, Vector3.zero, Handles.DotHandleCap);
-                                if (EditorGUI.EndChangeCheck())
-                                {
-                                    Undo.RecordObject(shape, "Move Control Point");
-                                    pt.ControlPoint2 = newCp2;
-                                    path.Points[i] = pt;
-                                    shape.m_FlattenedPath.Clear();
-                                    shape.SetAllDirty();
-                                }
-                                Handles.DrawDottedLine(pos, newCp2, 2f);
-                                Handles.color = Color.green;
-                            }
-
-                            if (i < path.Points.Count - 1 || path.Closed)
-                            {
-                                int nextIdx = (i + 1) % path.Points.Count;
-                                var nextPt = path.Points[nextIdx];
-                                if (nextPt.Type == PathPointType.Line)
-                                {
-                                    Handles.DrawLine(pos, nextPt.Position);
-                                }
-                                else
-                                {
-                                    Handles.DrawBezier(pos, nextPt.Position, pt.ControlPoint2, nextPt.ControlPoint1, Color.green, null, 2f);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Gradient Controls
-                if (shape.MainFill.Type == FillType.LinearGradient || shape.MainFill.Type == FillType.RadialGradient || shape.MainFill.Type == FillType.AngularGradient)
-                {
-                    Handles.color = Color.yellow;
-                    Vector2 offset = shape.MainFill.GradientOffset;
-                    Vector3 center = new Vector3(offset.x * hw, offset.y * hh, 0);
-                    
-                    EditorGUI.BeginChangeCheck();
-                    Vector3 newCenter = Handles.FreeMoveHandle(center, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(center)) * 0.08f, Vector3.zero, Handles.CircleHandleCap);
-                    
-                    float angleRad = shape.MainFill.GradientAngle * Mathf.Deg2Rad;
-                    Vector3 dir = new Vector3(Mathf.Cos(angleRad), Mathf.Sin(angleRad), 0);
-                    float scale = shape.MainFill.GradientScale * Mathf.Max(hw, hh);
-                    
-                    Vector3 anglePos = newCenter + dir * scale;
-                    Vector3 newAnglePos = Handles.FreeMoveHandle(anglePos, HandleUtility.GetHandleSize(geomMatrix.MultiplyPoint3x4(anglePos)) * 0.08f, Vector3.zero, Handles.DotHandleCap);
-                    Handles.DrawDottedLine(newCenter, newAnglePos, 2f);
-                    
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(shape, "Change Gradient");
-                        shape.MainFill.GradientOffset = new Vector2(newCenter.x / (hw == 0 ? 1 : hw), newCenter.y / (hh == 0 ? 1 : hh));
-                        
-                        Vector3 localDir = newAnglePos - newCenter;
-                        shape.MainFill.GradientScale = Mathf.Max(0.01f, localDir.magnitude / Mathf.Max(hw, hh));
-                        shape.MainFill.GradientAngle = Mathf.Atan2(localDir.y, localDir.x) * Mathf.Rad2Deg;
-                        
-                        shape.SetAllDirty();
-                    }
-                }
-            }
-        }
-
-        private bool DrawEffectItem(SerializedProperty listProp, int index)
-        {
-            SerializedProperty effectProp = listProp.GetArrayElementAtIndex(index);
-            SerializedProperty enabledProp = effectProp.FindPropertyRelative("Enabled");
-            
-            string rawName = effectProp.managedReferenceFullTypename;
-            string effectName = rawName.Contains("DropShadow") ? "Drop Shadow" : 
-                                rawName.Contains("InnerShadow") ? "Inner Shadow" : 
-                                rawName.Contains("OuterGlow") ? "Outer Glow" :
-                                rawName.Contains("Stroke") ? "Stroke" : "Blur";
-
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            EditorGUILayout.BeginHorizontal();
-            
-            enabledProp.boolValue = EditorGUILayout.Toggle(enabledProp.boolValue, GUILayout.Width(20));
-            effectProp.isExpanded = EditorGUILayout.Foldout(effectProp.isExpanded, effectName, true);
-            
-            GUILayout.FlexibleSpace();
-
-            // UP Button
-            EditorGUI.BeginDisabledGroup(index == 0);
-            if (GUILayout.Button("▲", GUILayout.Width(20)))
-            {
-                listProp.MoveArrayElement(index, index - 1);
-                EditorGUI.EndDisabledGroup();
-                EditorGUILayout.EndHorizontal();
-                EditorGUILayout.EndVertical();
-                return true;
-            }
-            EditorGUI.EndDisabledGroup();
-
-            // DOWN Button
-            EditorGUI.BeginDisabledGroup(index == listProp.arraySize - 1);
-            if (GUILayout.Button("▼", GUILayout.Width(20)))
-            {
-                listProp.MoveArrayElement(index, index + 1);
-                EditorGUI.EndDisabledGroup();
-                EditorGUILayout.EndHorizontal();
-                EditorGUILayout.EndVertical();
-                return true;
-            }
-            EditorGUI.EndDisabledGroup();
-
-            // REMOVE Button
-            if (GUILayout.Button("X", GUILayout.Width(25)))
-            {
-                listProp.DeleteArrayElementAtIndex(index);
-                EditorGUILayout.EndHorizontal();
-                EditorGUILayout.EndVertical();
-                return true;
-            }
-            EditorGUILayout.EndHorizontal();
-
-            if (effectProp.isExpanded && enabledProp.boolValue)
-            {
-                GUILayout.Space(5);
-                SerializedProperty child = effectProp.Copy();
-                SerializedProperty end = effectProp.GetEndProperty();
-                
-                if (child.NextVisible(true))
-                {
-                    do
-                    {
-                        if (SerializedProperty.EqualContents(child, end)) break;
-                        if (child.name == "Enabled" || child.name == "Color") continue;
-                        
-                        if (child.name == "Fill") 
-                        {
-                            EditorGUILayout.LabelField("Effect Color", EditorStyles.boldLabel);
-                            EditorGUILayout.PropertyField(child, true);
-                            GUILayout.Space(5);
-                        }
-                        else 
-                        {
-                            EditorGUILayout.PropertyField(child, true);
-                        }
-                    } while (child.NextVisible(false));
-                }
-                GUILayout.Space(5);
-            }
-            EditorGUILayout.EndVertical();
-            return false;
-        }
-
-        private void AddEffect(ProceduralEffect effect)
-        {
-            ProceduralShape shape = (ProceduralShape)target;
-            Undo.RecordObject(shape, "Add Effect");
-            shape.Effects.Add(effect);
-            EditorUtility.SetDirty(shape);
-            shape.SetAllDirty();
         }
     }
 }

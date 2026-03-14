@@ -1,0 +1,76 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
+    <ui:VisualElement class="ps-root">
+        <!-- Header -->
+        <ui:VisualElement class="ps-header">
+            <ui:VisualElement class="ps-header-icon" />
+            <ui:Label text="Procedural Shape" class="ps-header-title" />
+        </ui:VisualElement>
+
+        <!-- Global Settings -->
+        <ui:VisualElement class="ps-section">
+            <ui:VisualElement class="ps-section-content">
+                <uie:PropertyField binding-path="m_DisableRendering" label="Disable Rendering" name="disable-rendering-field" />
+                <uie:PropertyField binding-path="m_InternalPadding" label="Internal Padding" name="internal-padding-field" />
+                <uie:PropertyField binding-path="m_EdgeSoftness" label="Edge Softness (AA)" name="edge-softness-field" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Geometry Section -->
+        <ui:VisualElement class="ps-section" name="geometry-section">
+            <ui:VisualElement class="ps-section-header">
+                <ui:Label text="1. Geometry" class="ps-section-title" />
+            </ui:VisualElement>
+            <ui:VisualElement class="ps-section-content">
+                <uie:PropertyField binding-path="m_ShapeType" label="Shape Type" name="shape-type-field" />
+                
+                <ui:VisualElement name="scale-pivot-row" style="flex-direction: row; justify-content: space-between;">
+                    <uie:PropertyField binding-path="m_ShapeScale2D" label="Scale" name="scale-field" style="flex-grow: 1;" />
+                    <ui:Button name="link-scale-button" class="ps-icon-button" style="width: 30px; margin-top: 18px;" />
+                </ui:VisualElement>
+
+                <uie:PropertyField binding-path="m_ShapePivot" label="Shape Pivot" name="pivot-field" />
+                
+                <ui:VisualElement name="shape-specific-params" style="margin-top: 8px; border-top-width: 1px; border-top-color: #333; padding-top: 8px;" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Boolean Operations -->
+        <ui:VisualElement class="ps-section">
+            <ui:VisualElement class="ps-section-header">
+                <ui:Label text="2. Boolean Operations" class="ps-section-title" />
+                <ui:Button text="+" name="add-boolean-button" class="ps-add-button" />
+            </ui:VisualElement>
+            <ui:VisualElement name="boolean-list-container" class="ps-list-container" />
+        </ui:VisualElement>
+
+        <!-- Fill & Color -->
+        <ui:VisualElement class="ps-section">
+            <ui:VisualElement class="ps-section-header">
+                <ui:Label text="3. Fill &amp; Color" class="ps-section-title" />
+            </ui:VisualElement>
+            <ui:VisualElement class="ps-section-content">
+                <uie:PropertyField binding-path="MainFill" label="Main Fill" />
+                <ui:VisualElement name="raycast-controls" style="margin-top: 8px;" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Effects -->
+        <ui:VisualElement class="ps-section">
+            <ui:VisualElement class="ps-section-header">
+                <ui:Label text="4. Effects" class="ps-section-title" />
+                <ui:Button text="+" name="add-effect-button" class="ps-add-button" />
+            </ui:VisualElement>
+            <ui:VisualElement name="effects-list-container" class="ps-list-container" />
+        </ui:VisualElement>
+
+        <!-- Tools -->
+        <ui:VisualElement class="ps-section">
+            <ui:VisualElement class="ps-section-header">
+                <ui:Label text="5. Tools" class="ps-section-title" />
+            </ui:VisualElement>
+            <ui:VisualElement class="ps-section-content">
+                <ui:Button text="Bake to PolygonCollider2D" name="bake-collider-button" class="ps-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>
