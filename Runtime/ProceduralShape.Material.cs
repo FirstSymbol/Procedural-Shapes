@@ -50,10 +50,13 @@ namespace ProceduralShapes.Runtime
             }
 
             // 1. Gather Data (Needed for both Hash and Applying)
-            if (m_ShapeType == ShapeType.Path && (m_FlattenedPath == null || m_FlattenedPath.Count == 0))
+            if (m_ShapeType == ShapeType.Path)
             {
                 if (m_FlattenedPath == null) m_FlattenedPath = new List<Vector2>();
-                PathUtils.FlattenPath(m_ShapePath, m_FlattenedPath);
+                if (m_FlattenedPath.Count == 0)
+                {
+                    PathUtils.FlattenPath(m_ShapePath, m_FlattenedPath);
+                }
             }
 
             Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
@@ -119,10 +122,11 @@ namespace ProceduralShapes.Runtime
 
             if (m_ShapeType == ShapeType.Path && m_FlattenedPath != null)
             {
+                HashUtils.Add(ref styleH1, (float)m_ShapeType);
                 HashUtils.Add(ref styleH1, m_FlattenedPath.Count);
                 HashUtils.Add(ref styleH1, m_ShapePath.Closed ? 1f : 0f);
                 HashUtils.Add(ref styleH1, m_ShapePath.Thickness);
-                foreach (var pt in m_FlattenedPath) { HashUtils.Add(ref styleH1, pt.x); HashUtils.Add(ref styleH1, pt.y); }
+                // Dynamic path points coordinates excluded from Style Hash to prevent material churn
             }
 
             int styleH2 = 31;
@@ -150,8 +154,11 @@ namespace ProceduralShapes.Runtime
             // 3. Get/Reuse Material
             Material matToUse = ProceduralMaterialPool.GetMaterial(styleKey, baseMaterial);
             
-            if (m_InstanceMaterial != null && m_InstanceMaterial != matToUse)
+            if (m_InstanceMaterial != null)
             {
+                // Always release the previous reference. If matToUse == m_InstanceMaterial, 
+                // the RefCount was incremented by GetMaterial and is now decremented back, 
+                // resulting in no net change, which is correct.
                 ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
             }
             
