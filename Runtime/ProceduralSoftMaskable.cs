@@ -120,7 +120,7 @@ namespace ProceduralShapes.Runtime
             Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
             
             Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
-            Matrix4x4 maskRotateToSDF = Matrix4x4.Rotate(Quaternion.Euler(0, 0, -maskShape.ShapeRotation));
+            Matrix4x4 maskRotateToSDF = Matrix4x4.identity; // Rotation removed
             
             // Final Unified Matrix
             Matrix4x4 localToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
@@ -140,14 +140,16 @@ namespace ProceduralShapes.Runtime
             
             // 3. Fill Data
             Texture gradientTex = maskShape.mainTexture; 
-            m_MaskMaterial.SetTexture(_MaskTex, gradientTex != null ? gradientTex : Texture2D.whiteTexture);
-            
+            m_MaskMaterial.SetTexture("_MaskTex", gradientTex != null ? gradientTex : Texture2D.whiteTexture);
+
             ShapeFill fill = maskShape.MainFill;
-            float texHeight = gradientTex != null ? gradientTex.height : 3;
-            float vCoord = 1.5f / texHeight;
-            
-            m_MaskMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, vCoord));
-            m_MaskMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, 0, 0));
+            int maskRowIndex = GradientAtlasManager.GetAtlasRow(fill);
+
+            float maskAlphaMult = maskShape.color.a;
+            if (fill.Type == FillType.Solid) maskAlphaMult *= fill.SolidColor.a;
+
+            m_MaskMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, (float)maskRowIndex));
+            m_MaskMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, maskAlphaMult, 0));
 
             // 4. Boolean Operations
             int activeCount = 0;
@@ -205,10 +207,10 @@ namespace ProceduralShapes.Runtime
             // Position in Mask SDF Space
             Vector3 posInMaskSDF = worldToMaskSDF.MultiplyPoint3x4(worldGeomCenter);
             
-            // Relative rotation: Other World Rotation - Mask World Rotation - Mask Shape Rotation + Other Shape Rotation
+            // Relative rotation: Other World Rotation - Mask World Rotation
             float maskWorldRot = m_CachedMask.Shape.transform.eulerAngles.z;
             float otherWorldRot = otherRect.eulerAngles.z;
-            float relativeRotation = otherWorldRot - maskWorldRot - m_CachedMask.Shape.ShapeRotation + shape.ShapeRotation;
+            float relativeRotation = otherWorldRot - maskWorldRot;
 
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             m_ShaderShapeParams[index] = shape.GetPackedShapeParams();

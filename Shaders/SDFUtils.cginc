@@ -1,6 +1,9 @@
 ﻿#ifndef SDF_UTILS_INCLUDED
 #define SDF_UTILS_INCLUDED
 
+uniform float4 _PathData[64];
+uniform int _PathPointCount;
+
 float smin(float a, float b, float k) {
     float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
     return lerp(b, a, h) - k * h * (1.0 - h);
@@ -140,6 +143,81 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
             }
         }
         return d;
+    }
+    else if (shapeType < 8.5) {
+        // Path
+        bool isClosed = params.x > 0.5;
+        float thickness = params.y;
+        int count = _PathPointCount;
+        if (count < 2) return 100000.0;
+        
+        float d = 1e10;
+        float s = 1.0;
+        
+        if (isClosed) {
+            float2 pt0 = _PathData[0].xy;
+            d = dot(p - pt0, p - pt0);
+            for(int i = 0, j = count - 1; i < count; j = i, i++) {
+                int i1 = i / 2;
+                int i2 = j / 2;
+                float2 vi = (i % 2 == 0) ? _PathData[i1].xy : _PathData[i1].zw;
+                float2 vj = (j % 2 == 0) ? _PathData[i2].xy : _PathData[i2].zw;
+                
+                float2 e = vj - vi;
+                float2 w = p - vi;
+                float2 b = w - e * clamp(dot(w, e) / max(dot(e, e), 0.0001), 0.0, 1.0);
+                d = min(d, dot(b, b));
+                
+                bool cond1 = p.y >= vi.y;
+                bool cond2 = p.y < vj.y;
+                bool cond3 = e.x * w.y > e.y * w.x;
+                if((cond1 && cond2 && cond3) || (!cond1 && !cond2 && !cond3)) s *= -1.0;
+            }
+            return s * sqrt(d);
+        } else {
+            for(int i = 0; i < count - 1; i++) {
+                int i1 = i / 2;
+                int i2 = (i + 1) / 2;
+                float2 vi = (i % 2 == 0) ? _PathData[i1].xy : _PathData[i1].zw;
+                float2 vj = ((i + 1) % 2 == 0) ? _PathData[i2].xy : _PathData[i2].zw;
+                
+                float2 e = vj - vi;
+                float2 w = p - vi;
+                float h = clamp(dot(w, e) / max(dot(e, e), 0.0001), 0.0, 1.0);
+                float2 b = w - e * h;
+                d = min(d, dot(b, b));
+            }
+            return sqrt(d) - thickness * 0.5;
+        }
+    }
+    else if (shapeType < 9.5) {
+        // Triangle (Equilateral)
+        float r = min(halfSize.x, halfSize.y);
+        p.y += r * 0.25; 
+        const float k = 1.7320508; // sqrt(3)
+        p.x = abs(p.x) - r;
+        p.y = p.y + r/k;
+        if( p.x+k*p.y>0.0 ) p = float2(p.x-k*p.y,-k*p.x-p.y)/2.0;
+        p.x -= clamp( p.x, -2.0*r, 0.0 );
+        return -length(p)*sign(p.y);
+    }
+    else if (shapeType < 10.5) {
+        // Heart
+        float r = min(halfSize.x, halfSize.y);
+        p.x = abs(p.x);
+        p.y += r * 0.5;
+        p /= r; 
+        
+        float d = 0;
+        if( p.y+p.x>1.0 ) {
+            float2 diff = p - float2(0.25, 0.75);
+            d = sqrt(dot(diff, diff)) - 0.3535534; // sqrt(2)/4
+        } else {
+            float2 diff1 = p - float2(0.00, 1.00);
+            float2 diff2 = p - 0.5 * max(p.x+p.y, 0.0);
+            d = sqrt(min(dot(diff1, diff1), dot(diff2, diff2))) * sign(p.x-p.y);
+        }
+        return d * r;
     }
     
     return 100000.0; // None

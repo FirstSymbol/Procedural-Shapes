@@ -114,7 +114,6 @@
                         _MaskWorldToLocalW
                     );
                     
-                    // Transform image local space (unbatched) to mask SDF space directly
                     float2 maskP = mul(localToMaskSDF, float4(i.localPos.xy, 0.0, 1.0)).xy;
                     
                     float maskType = _MaskParams.y;
@@ -138,8 +137,6 @@
                             float2 boolSize = _MaskBoolSize[k].xy;
                             float4 boolShapeParams = _MaskBoolShapeParams[k];
 
-                            // Boolean positions are now already correctly in the Mask SDF Space.
-                            // We only need to apply the relative geometric rotation.
                             float2 p2 = maskP - boolTrans.xy;
                             float rot = boolTrans.z;
                             if (abs(rot) > 0.0001) {
@@ -169,31 +166,33 @@
                     float fillType = _MaskFillParams.x;
                     float gradAngle = _MaskFillParams.y;
                     float gradScale = _MaskFillParams.z;
+                    float mRowIndex = _MaskFillParams.w;
                     float2 gradOffset = _MaskFillOffset.xy; 
+                    float mBaseAlpha = _MaskFillOffset.z;
 
                     float2 gradP = maskP - (halfSize * gradOffset);
                     gradP /= max(gradScale, 0.001);
 
                     float t = 0.5;
-                    if (fillType == 1.0) { 
+                    if (fillType > 0.5 && fillType < 1.5) { // Linear
                         float rad = gradAngle * 0.0174533;
                         float2 dir = float2(cos(rad), sin(rad));
                         t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
-                    } else if (fillType == 2.0) { 
+                    } else if (fillType > 1.5 && fillType < 2.5) { // Radial
                         t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
-                    } else if (fillType == 3.0) { 
+                    } else if (fillType > 2.5 && fillType < 3.5) { // Angular
                         t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
                     }
                     
-                    float vCoord = _MaskFillParams.w;
+                    float mVCoord = (mRowIndex * 3.0 + 1.5) / 512.0;
                     float fillAlpha = 1.0;
                     if (fillType > 0.5) { 
-                         fillAlpha = tex2D(_MaskTex, float2(saturate(t), vCoord)).a;
+                         fillAlpha = tex2D(_MaskTex, float2(saturate(t), mVCoord)).a;
                     } else {
-                         fillAlpha = tex2D(_MaskTex, float2(0.5, vCoord)).a; 
+                         fillAlpha = tex2D(_MaskTex, float2(0.5, mVCoord)).a; 
                     }
 
-                    color.a *= shapeAlpha * fillAlpha;
+                    color.a *= shapeAlpha * fillAlpha * mBaseAlpha;
                 }
 
                 #ifdef UNITY_UI_CLIP_RECT
