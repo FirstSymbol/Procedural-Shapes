@@ -210,7 +210,7 @@ Shader "UI/ProceduralShapes/Shape"
                 else if (effectType == 3.0) { // Inner Shadow/Glow
                     float baseD = d + spread;
                     mask = saturate(smoothstep(-max(blur, 0.001), 0, baseD));
-                    mask *= smoothstep(aa, -aa, d_orig); 
+                    mask = min(mask, smoothstep(aa, -aa, d_orig)); 
                 }
                 else if (effectType == 5.0) { // Bevel
                     mask = 1.0; 
@@ -329,8 +329,9 @@ Shader "UI/ProceduralShapes/Shape"
                     }
 
                     float mTotalAlpha = mAlpha * mFillAlpha * mBaseAlpha;
-                    finalColor.a *= mTotalAlpha;
-                    finalColor.rgb *= mTotalAlpha;
+                    float oldAlpha = finalColor.a;
+                    finalColor.a = min(oldAlpha, mTotalAlpha);
+                    finalColor.rgb *= (finalColor.a / max(oldAlpha, 0.0001));
                 }
 
                 if (finalColor.a <= 0.001) discard;
