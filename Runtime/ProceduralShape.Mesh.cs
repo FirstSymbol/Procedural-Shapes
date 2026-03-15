@@ -168,6 +168,7 @@ namespace ProceduralShapes.Runtime
             if (m_ShapeType == ShapeType.Line) return new Vector4(m_LineStart.x, m_LineStart.y, m_LineEnd.x, m_LineEnd.y);
             if (m_ShapeType == ShapeType.Ring) return new Vector4(m_RingInnerRadius, m_RingStartAngle * Mathf.Deg2Rad, m_RingEndAngle * Mathf.Deg2Rad, 0);
             if (m_ShapeType == ShapeType.Path) return new Vector4(m_ShapePath.Closed ? 1f : 0f, m_ShapePath.Thickness, 0, 0);
+            if (m_ShapeType == ShapeType.Triangle || m_ShapeType == ShapeType.Heart) return new Vector4(0, 0, 0, 0);
             return Vector4.zero;
         }
 
@@ -236,19 +237,49 @@ namespace ProceduralShapes.Runtime
                 float cx = r.center.x + pivotOffset.x;
                 float cy = r.center.y + pivotOffset.y;
 
-                s_Corners[0] = new Vector3(cx - hw, cy - hh, 0);
-                s_Corners[1] = new Vector3(cx - hw, cy + hh, 0);
-                s_Corners[2] = new Vector3(cx + hw, cy + hh, 0);
-                s_Corners[3] = new Vector3(cx + hw, cy - hh, 0);
-                
-                for (int i = 0; i < 4; i++)
+                if (other.m_ShapeType == ShapeType.Path && other.m_ShapePath != null && other.m_ShapePath.Points != null)
                 {
-                    Vector3 worldPt = rt.TransformPoint(s_Corners[i]);
-                    Vector3 localPt = rootWorldToLocal.MultiplyPoint3x4(worldPt);
-                    minX = Mathf.Min(minX, localPt.x);
-                    maxX = Mathf.Max(maxX, localPt.x);
-                    minY = Mathf.Min(minY, localPt.y);
-                    maxY = Mathf.Max(maxY, localPt.y);
+                    foreach (var pt in other.m_ShapePath.Points)
+                    {
+                        Vector3 worldPt = rt.TransformPoint(pt.Position);
+                        Vector3 localPt = rootWorldToLocal.MultiplyPoint3x4(worldPt);
+                        minX = Mathf.Min(minX, localPt.x);
+                        maxX = Mathf.Max(maxX, localPt.x);
+                        minY = Mathf.Min(minY, localPt.y);
+                        maxY = Mathf.Max(maxY, localPt.y);
+
+                        if (pt.Type == PathPointType.Bezier)
+                        {
+                            Vector3 cp1 = rt.TransformPoint(pt.ControlPoint1);
+                            Vector3 cp2 = rt.TransformPoint(pt.ControlPoint2);
+                            Vector3 lcp1 = rootWorldToLocal.MultiplyPoint3x4(cp1);
+                            Vector3 lcp2 = rootWorldToLocal.MultiplyPoint3x4(cp2);
+                            minX = Mathf.Min(minX, lcp1.x, lcp2.x);
+                            maxX = Mathf.Max(maxX, lcp1.x, lcp2.x);
+                            minY = Mathf.Min(minY, lcp1.y, lcp2.y);
+                            maxY = Mathf.Max(maxY, lcp1.y, lcp2.y);
+                        }
+                    }
+                    // Add thickness margin
+                    float thick = other.m_ShapePath.Thickness * 0.5f;
+                    minX -= thick; maxX += thick; minY -= thick; maxY += thick;
+                }
+                else
+                {
+                    s_Corners[0] = new Vector3(cx - hw, cy - hh, 0);
+                    s_Corners[1] = new Vector3(cx - hw, cy + hh, 0);
+                    s_Corners[2] = new Vector3(cx + hw, cy + hh, 0);
+                    s_Corners[3] = new Vector3(cx + hw, cy - hh, 0);
+                    
+                    for (int i = 0; i < 4; i++)
+                    {
+                        Vector3 worldPt = rt.TransformPoint(s_Corners[i]);
+                        Vector3 localPt = rootWorldToLocal.MultiplyPoint3x4(worldPt);
+                        minX = Mathf.Min(minX, localPt.x);
+                        maxX = Mathf.Max(maxX, localPt.x);
+                        minY = Mathf.Min(minY, localPt.y);
+                        maxY = Mathf.Max(maxY, localPt.y);
+                    }
                 }
 
                 ExpandBoundsRecursiveInternal(other, ref minX, ref maxX, ref minY, ref maxY, rootWorldToLocal);

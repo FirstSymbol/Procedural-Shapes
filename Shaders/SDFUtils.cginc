@@ -150,9 +150,9 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
         // Line
         float2 a = params.xy;
         float2 b = params.zw;
-        float thickness = smoothing * 0.5; // smoothing is m_LineWidth
+        float thickness = smoothing * 0.5; 
         float2 pa = p - a, ba = b - a;
-        float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.0001), 0.0, 1.0);
         return length(pa - ba * h) - thickness;
     }
     else if (shapeType < 6.5) {
@@ -177,7 +177,7 @@ float GetBasicSDF(float2 p, float2 halfSize, float shapeType, float smoothing, f
         return d;
     }
     else if (shapeType < 8.5) {
-        // Path
+        // Path (Main shape path points)
         bool isClosed = params.x > 0.5;
         float thickness = params.y;
         int count = _PathPointCount;

@@ -271,7 +271,10 @@ namespace ProceduralShapes.Runtime
 
             float relativeRotation = otherRect.eulerAngles.z - rectTransform.eulerAngles.z;
 
-            m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
+            float customParam = shape.m_CornerSmoothing;
+            if (shape.m_ShapeType == ShapeType.Line) customParam = shape.m_LineWidth;
+
+            m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, customParam, smoothness); 
             m_ShaderShapeParams[index] = shape.GetPackedShapeParams();
             m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, relativeRotation * Mathf.Deg2Rad, 0);
             
@@ -324,7 +327,10 @@ namespace ProceduralShapes.Runtime
             float otherWorldRot = otherRect.eulerAngles.z;
             float relativeRotation = otherWorldRot - maskWorldRot;
 
-            m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
+            float customParam = shape.m_CornerSmoothing;
+            if (shape.m_ShapeType == ShapeType.Line) customParam = shape.m_LineWidth;
+
+            m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, customParam, smoothness); 
             m_MaskShaderShapeParams[index] = shape.GetPackedShapeParams();
             m_MaskShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
             
