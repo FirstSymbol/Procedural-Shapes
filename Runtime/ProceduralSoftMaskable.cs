@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
+using UnityEngine;
 using UnityEngine.UI;
 
 namespace ProceduralShapes.Runtime
@@ -42,18 +43,38 @@ namespace ProceduralShapes.Runtime
         private void OnEnable()
         {
             m_Graphic = GetComponent<Graphic>();
+            RefreshMaskSubscription();
             m_Graphic.SetMaterialDirty();
             m_Graphic.SetVerticesDirty();
         }
 
         private void OnDisable()
         {
+            if (m_CachedMask != null && m_CachedMask.Shape != null)
+                m_CachedMask.Shape.OnShapeChanged -= HandleMaskChanged;
+
             if (m_MaskMaterial != null) DestroyImmediate(m_MaskMaterial);
             if (m_Graphic != null)
             {
                 m_Graphic.SetMaterialDirty();
                 m_Graphic.SetVerticesDirty();
             }
+        }
+
+        private void RefreshMaskSubscription()
+        {
+            if (m_CachedMask != null && m_CachedMask.Shape != null)
+                m_CachedMask.Shape.OnShapeChanged -= HandleMaskChanged;
+
+            m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
+
+            if (m_CachedMask != null && m_CachedMask.Shape != null)
+                m_CachedMask.Shape.OnShapeChanged += HandleMaskChanged;
+        }
+
+        private void HandleMaskChanged()
+        {
+            if (m_Graphic != null) m_Graphic.SetMaterialDirty();
         }
 
         private uint m_LastMaskVersion = 0;
@@ -64,7 +85,11 @@ namespace ProceduralShapes.Runtime
         private void Update()
         {
             if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null)
+            {
+                var currentMask = GetComponentInParent<ProceduralShapeMask>();
+                if (currentMask != m_CachedMask) RefreshMaskSubscription();
                 return;
+            }
 
             bool dirty = false;
             if (m_CachedMask.Shape.Version != m_LastMaskVersion)
@@ -179,7 +204,11 @@ namespace ProceduralShapes.Runtime
             int activeCount = 0;
             // For booleans, we just need World -> MaskSDF
             Matrix4x4 worldToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal;
+            
+            ProceduralShape.s_VisitedShapes.Clear();
+            ProceduralShape.s_VisitedShapes.Add(maskShape);
             CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, worldToMaskSDF);
+            ProceduralShape.s_VisitedShapes.Clear();
             
             m_MaskMaterial.SetInt(_MaskBoolParams, activeCount);
             if (activeCount > 0)
@@ -199,9 +228,10 @@ namespace ProceduralShapes.Runtime
             {
                 if (count >= MAX_OPS) return;
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == m_CachedMask.Shape) continue;
+                if (ProceduralShape.s_VisitedShapes.Contains(input.SourceShape)) continue;
 
                 ProceduralShape other = input.SourceShape;
+                ProceduralShape.s_VisitedShapes.Add(other);
                 
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)

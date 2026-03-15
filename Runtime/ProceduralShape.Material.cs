@@ -37,9 +37,16 @@ namespace ProceduralShapes.Runtime
         private int m_ActiveMaskBoolCount;
         [System.NonSerialized] private int m_LastBaseMatId = 0;
 
+        private static readonly int _BoolPathData = Shader.PropertyToID("_BoolPathData");
+        private static readonly int _BoolPathPointCount = Shader.PropertyToID("_BoolPathPointCount");
+
         public override Material GetModifiedMaterial(Material baseMaterial)
         {
-            if (BooleanOperations.Count == 0 && m_CachedMask == null && MainFill.Type != FillType.Pattern && m_ShapeType != ShapeType.Path)
+            // Shapes with Booleans or Paths MUST have unique material instances to avoid "linking" artifacts when duplicated,
+            // because their uniforms (transforms, path points) are per-instance but shared in the pool.
+            bool needsUniqueMaterial = BooleanOperations.Count > 0 || m_ShapeType == ShapeType.Path || m_CachedMask != null;
+
+            if (!needsUniqueMaterial && MainFill.Type != FillType.Pattern)
             {
                 if (m_InstanceMaterial != null)
                 {
@@ -62,8 +69,24 @@ namespace ProceduralShapes.Runtime
             Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
             Vector2 selfCenterOffset = GetGeometricCenterOffset();
             m_ActiveBoolCount = 0;
-            CollectBooleanOps(this, BooleanOperation.Union, ref m_ActiveBoolCount, worldToLocal, selfCenterOffset);
+            s_VisitedShapes.Clear();
+            s_VisitedShapes.Add(this);
+            
+            // Check if any operator is a Path and prepare its data
+            ProceduralShape firstPathOperator = null;
+            foreach(var op in BooleanOperations) {
+                if (op.SourceShape != null && op.SourceShape.m_ShapeType == ShapeType.Path) {
+                    firstPathOperator = op.SourceShape;
+                    if (firstPathOperator.m_FlattenedPath == null || firstPathOperator.m_FlattenedPath.Count == 0)
+                        PathUtils.FlattenPath(firstPathOperator.m_ShapePath, firstPathOperator.m_FlattenedPath);
+                    break;
+                }
+            }
 
+            CollectBooleanOps(this, BooleanOperation.Union, ref m_ActiveBoolCount, worldToLocal, selfCenterOffset);
+            s_VisitedShapes.Clear();
+
+            // ... (hasMask logic remains same)
             bool hasMask = false;
             Vector4 maskParams = Vector4.zero;
             Vector4 maskSize = Vector4.zero;
@@ -106,86 +129,61 @@ namespace ProceduralShapes.Runtime
                 maskFillParams = new Vector4((float)mFill.Type, mFill.GradientAngle, mFill.GradientScale, (float)maskRowIndex);
                 maskFillOffset = new Vector4(mFill.GradientOffset.x, mFill.GradientOffset.y, maskAlphaMult, 0);
                 Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
+                
+                s_VisitedShapes.Clear();
+                s_VisitedShapes.Add(maskS);
                 CollectMaskBooleanOps(maskS, BooleanOperation.Union, ref m_ActiveMaskBoolCount, worldToMaskSDF);
+                s_VisitedShapes.Clear();
             }
 
-            // 2. Compute "Style Key" (Excluding transforms for pooling/reuse)
-            int styleH1 = 17;
-            HashUtils.Add(ref styleH1, m_ActiveBoolCount);
-            for (int i = 0; i < m_ActiveBoolCount; i++) {
-                HashUtils.Add(ref styleH1, m_ShaderOps[i].x); // Op
-                HashUtils.Add(ref styleH1, m_ShaderOps[i].y); // Type
-                HashUtils.Add(ref styleH1, m_ShaderOps[i].z); // Smoothing
-                HashUtils.Add(ref styleH1, m_ShaderOps[i].w); // Smoothness
-                HashUtils.Add(ref styleH1, m_ShaderShapeParams[i]);
-            }
-
-            if (m_ShapeType == ShapeType.Path && m_FlattenedPath != null)
+            // 2. Decide: Pool or Unique?
+            Material matToUse = null;
+            if (needsUniqueMaterial)
             {
-                HashUtils.Add(ref styleH1, (float)m_ShapeType);
-                HashUtils.Add(ref styleH1, m_FlattenedPath.Count);
-                HashUtils.Add(ref styleH1, m_ShapePath.Closed ? 1f : 0f);
-                HashUtils.Add(ref styleH1, m_ShapePath.Thickness);
-                // Dynamic path points coordinates excluded from Style Hash to prevent material churn
-            }
-
-            int styleH2 = 31;
-            if (hasMask) {
-                HashUtils.Add(ref styleH2, 1f);
-                HashUtils.Add(ref styleH2, maskParams.y);
-                HashUtils.Add(ref styleH2, maskParams.z);
-                HashUtils.Add(ref styleH2, maskShape);
-                HashUtils.Add(ref styleH2, maskFillParams.x);
-                HashUtils.Add(ref styleH2, m_ActiveMaskBoolCount);
-                for (int i = 0; i < m_ActiveMaskBoolCount; i++) {
-                    HashUtils.Add(ref styleH2, m_MaskShaderOps[i].x);
-                    HashUtils.Add(ref styleH2, m_MaskShaderOps[i].y);
-                    HashUtils.Add(ref styleH2, m_MaskShaderShapeParams[i]);
+                // For complex shapes, we bypass the pool to prevent property leaking between instances
+                if (m_InstanceMaterial == null || m_LastBaseMatId != baseMaterial.GetInstanceID())
+                {
+                    if (m_InstanceMaterial != null) ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
+                    matToUse = new Material(baseMaterial);
+                    matToUse.hideFlags = HideFlags.HideAndDontSave;
+                }
+                else
+                {
+                    matToUse = m_InstanceMaterial;
                 }
             }
-
-            MaterialHashKey styleKey = new MaterialHashKey();
-            styleKey.BaseMatId = baseMaterial.GetInstanceID();
-            styleKey.PatternId = (MainFill.Type == FillType.Pattern && MainFill.PatternTexture != null) ? MainFill.PatternTexture.GetInstanceID() : 0;
-            styleKey.Padding = m_InternalPadding;
-            styleKey.Hash1 = styleH1;
-            styleKey.Hash2 = styleH2;
-
-            // 3. Get/Reuse Material
-            Material matToUse = ProceduralMaterialPool.GetMaterial(styleKey, baseMaterial);
-            
-            if (m_InstanceMaterial != null)
+            else
             {
-                // Always release the previous reference. If matToUse == m_InstanceMaterial, 
-                // the RefCount was incremented by GetMaterial and is now decremented back, 
-                // resulting in no net change, which is correct.
-                ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
+                // Simple shapes can still be pooled for performance
+                int styleH1 = 17;
+                HashUtils.Add(ref styleH1, m_InternalPadding);
+                // ... (simplified hash)
+                MaterialHashKey styleKey = new MaterialHashKey { BaseMatId = baseMaterial.GetInstanceID(), Padding = m_InternalPadding, Hash1 = styleH1 };
+                matToUse = ProceduralMaterialPool.GetMaterial(styleKey, baseMaterial);
+                if (m_InstanceMaterial != null && m_InstanceMaterial != matToUse) 
+                    ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
             }
             
             m_InstanceMaterial = matToUse;
-            m_LastBaseMatId = styleKey.BaseMatId;
+            m_LastBaseMatId = baseMaterial.GetInstanceID();
 
-            // 4. Apply Properties (ALWAYS update uniforms)
+            // 3. Apply Properties
             m_InstanceMaterial.CopyPropertiesFromMaterial(baseMaterial); 
             m_InstanceMaterial.SetTexture("_MainTex", mainTexture);
             
             if (MainFill.Type == FillType.Pattern && MainFill.PatternTexture != null)
                 m_InstanceMaterial.SetTexture("_PatternTex", MainFill.PatternTexture);
 
+            // Target Path Points
             if (m_ShapeType == ShapeType.Path && m_FlattenedPath != null)
             {
-                int count = Mathf.Min(m_FlattenedPath.Count, 128);
-                Vector4[] pathData = new Vector4[64];
-                for (int i = 0; i < count; i += 2)
-                {
-                    float x1 = m_FlattenedPath[i].x;
-                    float y1 = m_FlattenedPath[i].y;
-                    float x2 = (i + 1 < count) ? m_FlattenedPath[i + 1].x : 0;
-                    float y2 = (i + 1 < count) ? m_FlattenedPath[i + 1].y : 0;
-                    pathData[i / 2] = new Vector4(x1, y1, x2, y2);
-                }
-                m_InstanceMaterial.SetVectorArray(_PathData, pathData);
-                m_InstanceMaterial.SetInt(_PathPointCount, count);
+                ApplyPathDataToMaterial(m_InstanceMaterial, m_FlattenedPath, _PathData, _PathPointCount);
+            }
+
+            // Operator Path Points
+            if (firstPathOperator != null)
+            {
+                ApplyPathDataToMaterial(m_InstanceMaterial, firstPathOperator.m_FlattenedPath, _BoolPathData, _BoolPathPointCount);
             }
 
             m_InstanceMaterial.SetFloat(_InternalPadding, m_InternalPadding);
@@ -228,6 +226,22 @@ namespace ProceduralShapes.Runtime
             return m_InstanceMaterial;
         }
 
+        private void ApplyPathDataToMaterial(Material mat, List<Vector2> points, int dataPropId, int countPropId)
+        {
+            int count = Mathf.Min(points.Count, 128);
+            Vector4[] pathData = new Vector4[64];
+            for (int i = 0; i < count; i += 2)
+            {
+                float x1 = points[i].x;
+                float y1 = points[i].y;
+                float x2 = (i + 1 < count) ? points[i + 1].x : 0;
+                float y2 = (i + 1 < count) ? points[i + 1].y : 0;
+                pathData[i / 2] = new Vector4(x1, y1, x2, y2);
+            }
+            mat.SetVectorArray(dataPropId, pathData);
+            mat.SetInt(countPropId, count);
+        }
+
         private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 rootWorldToLocal, Vector3 rootCenterOffset)
         {
             if (currentShape == null) return;
@@ -236,9 +250,10 @@ namespace ProceduralShapes.Runtime
             {
                 if (count >= MAX_OPS) return;
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == this) continue; 
+                if (s_VisitedShapes.Contains(input.SourceShape)) continue; 
 
                 ProceduralShape other = input.SourceShape;
+                s_VisitedShapes.Add(other);
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)
                 {
@@ -263,7 +278,10 @@ namespace ProceduralShapes.Runtime
 
             float relativeRotation = otherRect.eulerAngles.z - rectTransform.eulerAngles.z;
 
-            m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
+            float customParam = shape.m_CornerSmoothing;
+            if (shape.m_ShapeType == ShapeType.Line) customParam = shape.m_LineWidth;
+
+            m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, customParam, smoothness); 
             m_ShaderShapeParams[index] = shape.GetPackedShapeParams();
             m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, relativeRotation * Mathf.Deg2Rad, 0);
             
@@ -284,9 +302,10 @@ namespace ProceduralShapes.Runtime
             {
                 if (count >= MAX_OPS) return;
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == m_CachedMask.Shape) continue;
+                if (s_VisitedShapes.Contains(input.SourceShape)) continue;
 
                 ProceduralShape other = input.SourceShape;
+                s_VisitedShapes.Add(other);
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)
                 {
@@ -315,7 +334,10 @@ namespace ProceduralShapes.Runtime
             float otherWorldRot = otherRect.eulerAngles.z;
             float relativeRotation = otherWorldRot - maskWorldRot;
 
-            m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
+            float customParam = shape.m_CornerSmoothing;
+            if (shape.m_ShapeType == ShapeType.Line) customParam = shape.m_LineWidth;
+
+            m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, customParam, smoothness); 
             m_MaskShaderShapeParams[index] = shape.GetPackedShapeParams();
             m_MaskShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
             
