@@ -86,7 +86,6 @@ Shader "UI/ProceduralShapes/Shape"
             float4 _BoolData_Transform[8];  
             float4 _BoolData_Size[8];       
 
-            // Mask Matrix
             float4 _MaskMatrixX;
             float4 _MaskMatrixY;
             float4 _MaskMatrixZ;
@@ -132,7 +131,7 @@ Shader "UI/ProceduralShapes/Shape"
                 float internalPadding = 0.0;
                 
                 if (effectType == 1.0 || effectType == 3.0) { // Shadows
-                    p -= i.normal.xy; // Original project offset logic
+                    p -= i.normal.xy; 
                     blur = i.normal.z;
                     aa = max(i.tangent.y, 0.001); 
                 } else { // Main Fill, Stroke, Blur
@@ -151,9 +150,8 @@ Shader "UI/ProceduralShapes/Shape"
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
-                // Base Distances
-                float d = GetBasicSDF(p + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams);
-                float d_orig = GetBasicSDF(p_orig + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams);
+                float d = GetBasicSDF(p + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams, false);
+                float d_orig = GetBasicSDF(p_orig + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams, false);
 
                 int boolCount = _BoolParams1;
                 if (boolCount > 0) {
@@ -167,23 +165,23 @@ Shader "UI/ProceduralShapes/Shape"
                         float2 boolSize = _BoolData_Size[k].xy;
                         float4 boolShapeParams = _BoolData_ShapeParams[k];
 
-                        // Sample shifted (d)
+                        bool isPathOp = boolType > 7.5 && boolType < 8.5;
+
                         float2 p2 = p - boolTrans.xy;
                         if (abs(boolTrans.z) > 0.0001) {
                             float s = sin(-boolTrans.z); float c = cos(-boolTrans.z);
                             p2 = float2(p2.x * c - p2.y * s, p2.x * s + p2.y * c);
                         }
-                        float d2 = GetBasicSDF(p2 + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
+                        float d2 = GetBasicSDF(p2 + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
                         if (smoothBlend > 0.001) d = smin_op(d, d2, boolOp, smoothBlend);
                         else d = hard_op(d, d2, boolOp);
 
-                        // Sample original (d_orig)
                         float2 p2_orig = p_orig - boolTrans.xy;
                         if (abs(boolTrans.z) > 0.0001) {
                             float s = sin(-boolTrans.z); float c = cos(-boolTrans.z);
                             p2_orig = float2(p2_orig.x * c - p2_orig.y * s, p2_orig.x * s + p2_orig.y * c);
                         }
-                        float d2_orig = GetBasicSDF(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);
+                        float d2_orig = GetBasicSDF(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
                         if (smoothBlend > 0.001) d_orig = smin_op(d_orig, d2_orig, boolOp, smoothBlend);
                         else d_orig = hard_op(d_orig, d2_orig, boolOp);
                     }
