@@ -4,6 +4,10 @@ using UnityEngine;
 
 namespace ProceduralShapes.Runtime
 {
+    /// <summary>
+    /// Ключ для идентификации уникального состояния материала в пуле.
+    /// Включает в себя ID базового материала и набор хешей специфичных параметров.
+    /// </summary>
     public struct MaterialHashKey : IEquatable<MaterialHashKey>
     {
         public int BaseMatId;
@@ -36,6 +40,7 @@ namespace ProceduralShapes.Runtime
         }
     }
 
+    /// <summary> Утилиты для быстрого формирования хеш-сумм. </summary>
     public static class HashUtils
     {
         public static void Add(ref int hash, float value)
@@ -55,17 +60,25 @@ namespace ProceduralShapes.Runtime
         }
     }
 
+    /// <summary>
+    /// Пул материалов для процедурных фигур.
+    /// Позволяет повторно использовать инстансы материалов с одинаковыми параметрами,
+    /// значительно снижая нагрузку на CPU и память.
+    /// </summary>
     public static class ProceduralMaterialPool
     {
         private class PoolEntry
         {
             public Material Material;
-            public int RefCount;
+            public int RefCount; // Счетчик ссылок для управления временем жизни материала
         }
 
         private static Dictionary<MaterialHashKey, PoolEntry> s_Pool = new Dictionary<MaterialHashKey, PoolEntry>();
         private static Dictionary<int, MaterialHashKey> s_InstanceToKey = new Dictionary<int, MaterialHashKey>();
 
+        /// <summary>
+        /// Возвращает материал из пула по ключу или создает новый, если совпадений не найдено.
+        /// </summary>
         public static Material GetMaterial(MaterialHashKey key, Material baseMat)
         {
             if (s_Pool.TryGetValue(key, out var entry))
@@ -74,6 +87,7 @@ namespace ProceduralShapes.Runtime
                 return entry.Material;
             }
 
+            // Создание нового инстанса материала на основе базового
             Material newMat = new Material(baseMat);
             newMat.hideFlags = HideFlags.HideAndDontSave;
             
@@ -82,6 +96,9 @@ namespace ProceduralShapes.Runtime
             return newMat;
         }
 
+        /// <summary>
+        /// Освобождает материал. Если счетчик ссылок достигает нуля, материал удаляется из памяти.
+        /// </summary>
         public static void ReleaseMaterial(Material mat)
         {
             if (mat == null) return;
@@ -94,6 +111,7 @@ namespace ProceduralShapes.Runtime
                     entry.RefCount--;
                     if (entry.RefCount <= 0)
                     {
+                        // Окончательное удаление материала
                         s_Pool.Remove(key);
                         s_InstanceToKey.Remove(id);
                         if (Application.isPlaying)
@@ -105,7 +123,7 @@ namespace ProceduralShapes.Runtime
             }
             else
             {
-                // Unmanaged material
+                // Если материал не из пула (уникальный), он просто уничтожается
                 if (Application.isPlaying)
                     UnityEngine.Object.Destroy(mat);
                 else
@@ -113,6 +131,7 @@ namespace ProceduralShapes.Runtime
             }
         }
         
+        /// <summary> Очистка всего пула материалов. </summary>
         public static void ClearAll()
         {
             foreach (var entry in s_Pool.Values)

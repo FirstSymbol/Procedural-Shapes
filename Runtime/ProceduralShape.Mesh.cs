@@ -6,6 +6,10 @@ namespace ProceduralShapes.Runtime
 {
     public partial class ProceduralShape
     {
+        /// <summary>
+        /// Основной метод генерации меша для Unity UI.
+        /// Генерирует квады или полигональные меши для каждого слоя (тени, заливка, обводка).
+        /// </summary>
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             RebuildGradientTexture();
@@ -19,6 +23,7 @@ namespace ProceduralShapes.Runtime
             vh.Clear();
             Rect rect = rectTransform.rect;
             
+            // Базовые границы на основе RectTransform
             float minX = rect.xMin;
             float maxX = rect.xMax;
             float minY = rect.yMin;
@@ -36,12 +41,14 @@ namespace ProceduralShapes.Runtime
             minY = Mathf.Min(minY, cy - hh);
             maxY = Mathf.Max(maxY, cy + hh);
 
+            // Если есть булевы операции (резаки), меш должен охватывать и их тоже
             if (BooleanOperations.Count > 0)
             {
                 Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
                 ExpandBoundsRecursive(this, ref minX, ref maxX, ref minY, ref maxY, worldToLocal);
             }
 
+            // Расчет расширения меша для учета мягкости краев, теней и свечения
             float maxExpand = 0f;
             float mainBlurRadius = 0f;
             
@@ -68,35 +75,49 @@ namespace ProceduralShapes.Runtime
             minY -= maxExpand;
             maxY += maxExpand;
 
+            // --- Порядок отрисовки слоев (Z-Order) ---
+
+            // 1. Внешние тени (Drop Shadows)
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is DropShadowEffect shadow && shadow.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, m_EdgeSoftness, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
 
+            // 2. Внешнее свечение (Outer Glow)
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is OuterGlowEffect glow && glow.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, m_EdgeSoftness, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
 
+            // 3. Основная фигура (Main Fill)
             DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, m_MainFillAtlasIndex, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y), maxExpand);
 
+            // 4. Внутренние тени (Inner Shadows)
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerShadowEffect inner && inner.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, m_EdgeSoftness, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
 
+            // 5. Внутреннее свечение (Inner Glow)
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is InnerGlowEffect iglow && iglow.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, m_EdgeSoftness, iglow.Fill.GradientOffset.x, iglow.Fill.GradientOffset.y));
 
+            // 6. Обводка (Stroke)
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is StrokeEffect stroke && stroke.Enabled)
                     DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 2, m_EffectAtlasIndices[i], stroke.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(stroke.Width, (float)stroke.Alignment, stroke.Fill.GradientOffset.x, stroke.Fill.GradientOffset.y), maxExpand, new Vector2(stroke.DashSize, stroke.DashSpace));
             
+            // 7. Фаска/Объем (Bevel)
             for (int i = 0; i < Effects.Count; i++)
                 if (Effects[i] is BevelEffect bevel && bevel.Enabled)
                     DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 5, m_EffectAtlasIndices[i], bevel.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, bevel.Distance), new Vector4(bevel.HighlightAlpha, bevel.ShadowAlpha, bevel.Angle * Mathf.Deg2Rad, 0));
         }
 
+        /// <summary>
+        /// Отрисовывает слой как меш, аппроксимирующий форму (используется для повышения производительности простых фигур).
+        /// Если фигура сложная (булевы операции, пути), переключается на DrawLayerQuad.
+        /// </summary>
         private void DrawLayerMesh(VertexHelper vh, float minX, float maxX, float minY, float maxY, Rect baseRect, int effectType, int textureRowIndex, ShapeFill fill, Vector3 normalData, Vector4 tangentData, float expansion, Vector2 dashData = default)
         {
+            // Сложные случаи всегда рисуются через полноэкранный квад (Raymarching в шейдере)
             bool isRoundedStar = m_ShapeType == ShapeType.Star && (m_StarRoundingOuter > 0.01f || m_StarRoundingInner > 0.01f);
             
             if (m_ShapeType == ShapeType.Rectangle || m_ShapeType == ShapeType.Line || m_ShapeType == ShapeType.Capsule || expansion > 5f || isRoundedStar || BooleanOperations.Count > 0 || m_ShapeType == ShapeType.Path)
@@ -159,6 +180,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary> Упаковывает параметры формы в Vector4 для передачи в UV-канал. </summary>
         public Vector4 GetPackedShapeParams()
         {
             if (m_ShapeType == ShapeType.Rectangle) return m_CornerRadius;
@@ -172,12 +194,14 @@ namespace ProceduralShapes.Runtime
             return Vector4.zero;
         }
 
+        /// <summary> Упаковывает базовые данные (размер, тип, эффект) для шейдера. </summary>
         private Vector4 GetPackedBaseData(Rect rect, int effectType, float smoothing)
         {
             float packedShapeData = (float)m_ShapeType + (Mathf.Clamp01(smoothing / 1000f) * 0.99f);
             return new Vector4(rect.width * m_ShapeScale2D.x, rect.height * m_ShapeScale2D.y, packedShapeData, effectType);
         }
 
+        /// <summary> Упаковывает параметры заливки и шума. </summary>
         private Vector4 GetPackedFillParams(int rowIndex, ShapeFill fill)
         {
             float packedRow = (float)rowIndex;
@@ -202,6 +226,9 @@ namespace ProceduralShapes.Runtime
 
         internal static readonly HashSet<ProceduralShape> s_VisitedShapes = new HashSet<ProceduralShape>();
 
+        /// <summary>
+        /// Рекурсивно расширяет границы меша, чтобы они включали все фигуры, участвующие в булевых операциях.
+        /// </summary>
         private void ExpandBoundsRecursive(ProceduralShape currentShape, ref float minX, ref float maxX, ref float minY, ref float maxY, Matrix4x4 rootWorldToLocal)
         {
             s_VisitedShapes.Clear();
@@ -260,7 +287,6 @@ namespace ProceduralShapes.Runtime
                             maxY = Mathf.Max(maxY, lcp1.y, lcp2.y);
                         }
                     }
-                    // Add thickness margin
                     float thick = other.m_ShapePath.Thickness * 0.5f;
                     minX -= thick; maxX += thick; minY -= thick; maxY += thick;
                 }
@@ -286,6 +312,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary> Отрисовывает слой как один квад, покрывающий всю область фигуры (включая эффекты). </summary>
         private void DrawLayerQuad(VertexHelper vh, float minX, float maxX, float minY, float maxY, Rect baseRect, int effectType, int textureRowIndex, ShapeFill fill, Vector3 normalData, Vector4 tangentData, Vector2 dashData = default)
         {
             Vector4 uv1_shapeParams = GetPackedShapeParams();
@@ -302,9 +329,12 @@ namespace ProceduralShapes.Runtime
 
             Vector2 pivotOffset = GetGeometricCenterOffset();
 
+            int startIndex = vh.currentVertCount;
+            float cx = baseRect.center.x + pivotOffset.x;
+            float cy = baseRect.center.y + pivotOffset.y;
+
             UIVertex vert = UIVertex.simpleVert;
             vert.color = fill.Type == FillType.Solid ? fill.SolidColor : Color.white; 
-            
             vert.normal = normalData;
             
             Vector4 finalTangent = tangentData;
@@ -317,11 +347,8 @@ namespace ProceduralShapes.Runtime
             vert.uv1 = uv1_shapeParams;
             vert.uv2 = uv2_baseData;
             vert.uv3 = uv3_fillParams;
-
-            int startIndex = vh.currentVertCount;
-            float cx = baseRect.center.x + pivotOffset.x;
-            float cy = baseRect.center.y + pivotOffset.y;
             
+            // Заполнение вершин квада
             vert.position = new Vector3(minX, minY); vert.uv0 = new Vector4(minX - cx, minY - cy, dashData.x, dashData.y); vh.AddVert(vert);
             vert.position = new Vector3(minX, maxY); vert.uv0 = new Vector4(minX - cx, maxY - cy, dashData.x, dashData.y); vh.AddVert(vert);
             vert.position = new Vector3(maxX, maxY); vert.uv0 = new Vector4(maxX - cx, maxY - cy, dashData.x, dashData.y); vh.AddVert(vert);

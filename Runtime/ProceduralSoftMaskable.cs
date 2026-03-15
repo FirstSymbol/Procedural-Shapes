@@ -4,6 +4,11 @@ using UnityEngine.UI;
 
 namespace ProceduralShapes.Runtime
 {
+    /// <summary>
+    /// Компонент, позволяющий обычным графическим элементам UI (например, Image) 
+    /// подвергаться маскированию с помощью ProceduralShapeMask.
+    /// Модифицирует меш и материал объекта для поддержки SDF-маскирования.
+    /// </summary>
     [ExecuteAlways]
     [RequireComponent(typeof(Graphic))]
     [AddComponentMenu("UI/Procedural Shapes/Soft Maskable Image")]
@@ -53,7 +58,12 @@ namespace ProceduralShapes.Runtime
             if (m_CachedMask != null && m_CachedMask.Shape != null)
                 m_CachedMask.Shape.OnShapeChanged -= HandleMaskChanged;
 
-            if (m_MaskMaterial != null) DestroyImmediate(m_MaskMaterial);
+            if (m_MaskMaterial != null)
+            {
+                if (Application.isPlaying) Destroy(m_MaskMaterial);
+                else DestroyImmediate(m_MaskMaterial);
+            }
+            
             if (m_Graphic != null)
             {
                 m_Graphic.SetMaterialDirty();
@@ -61,6 +71,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary> Находит ближайшую родительскую маску и подписывается на ее изменения. </summary>
         private void RefreshMaskSubscription()
         {
             if (m_CachedMask != null && m_CachedMask.Shape != null)
@@ -69,13 +80,16 @@ namespace ProceduralShapes.Runtime
             m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
 
             if (m_CachedMask != null && m_CachedMask.Shape != null)
-                m_CachedMask.Shape.OnShapeChanged += HandleMaskChanged;
+                m_CachedMask.Shape.OnShapeChanged += HandleDependencyChanged;
         }
 
-        private void HandleMaskChanged()
+        private void HandleDependencyChanged()
         {
             if (m_Graphic != null) m_Graphic.SetMaterialDirty();
         }
+
+        // Устаревший метод, оставлен для совместимости
+        private void HandleMaskChanged() => HandleDependencyChanged();
 
         private uint m_LastMaskVersion = 0;
         private Vector3 m_LastPos;
@@ -92,12 +106,15 @@ namespace ProceduralShapes.Runtime
             }
 
             bool dirty = false;
+            
+            // Проверка версии маски для перерисовки
             if (m_CachedMask.Shape.Version != m_LastMaskVersion)
             {
                 m_LastMaskVersion = m_CachedMask.Shape.Version;
                 dirty = true;
             }
 
+            // Проверка изменения позиции/вращения для обновления матрицы
             Transform t = transform;
             if (t.position != m_LastPos || t.rotation != m_LastRot || t.lossyScale != m_LastScale)
             {
@@ -113,6 +130,9 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary>
+        /// Копирует локальные координаты вершин в UV1 для корректного расчета SDF в шейдере маски.
+        /// </summary>
         public void ModifyMesh(VertexHelper vh)
         {
             if (!isActiveAndEnabled) return;
@@ -120,13 +140,16 @@ namespace ProceduralShapes.Runtime
             for (int i = 0; i < vh.currentVertCount; i++)
             {
                 vh.PopulateUIVertex(ref vert, i);
-                vert.uv1 = new Vector4(vert.position.x, vert.position.y, 0, 0); // Preserve pure local position
+                vert.uv1 = new Vector4(vert.position.x, vert.position.y, 0, 0); 
                 vh.SetUIVertex(vert, i);
             }
         }
 
         public void ModifyMesh(Mesh mesh) { }
 
+        /// <summary>
+        /// Подменяет стандартный материал графики на специальный шейдер мягкой маски.
+        /// </summary>
         public Material GetModifiedMaterial(Material baseMaterial)
         {
             if (!isActiveAndEnabled) return baseMaterial;
@@ -142,6 +165,7 @@ namespace ProceduralShapes.Runtime
                 m_MaskMaterial = new Material(Shader.Find("UI/ProceduralShapes/SoftMaskedImage"));
                 m_MaskMaterial.hideFlags = HideFlags.HideAndDontSave;
             }
+            
             m_MaskMaterial.CopyPropertiesFromMaterial(baseMaterial);
             m_MaskMaterial.shaderKeywords = baseMaterial.shaderKeywords;
 
@@ -150,17 +174,17 @@ namespace ProceduralShapes.Runtime
             return m_MaskMaterial;
         }
 
+        /// <summary> Подготавливает и передает все параметры SDF маски в материал. </summary>
         private void UpdateMaskData()
         {
             ProceduralShape maskShape = m_CachedMask.Shape;
             RectTransform maskRT = maskShape.rectTransform;
             RectTransform imageRT = m_Graphic.rectTransform;
             
-            // Calculate matrix: ImageLocal -> World -> MaskLocal -> MaskSDF
+            // Расчет матрицы: ImageLocal -> World -> MaskLocal -> MaskSDF
             Matrix4x4 imageLocalToWorld = imageRT.localToWorldMatrix;
             Matrix4x4 maskWorldToLocal = maskRT.worldToLocalMatrix;
             
-            // Mask Local -> Mask SDF involves shifting by pivot and applying negative rotation
             Vector2 maskSizeRaw = maskRT.rect.size;
             Vector2 maskPivot = maskRT.pivot;
             Vector2 maskPivotOffset = maskShape.GetGeometricCenterOffset();
@@ -169,17 +193,14 @@ namespace ProceduralShapes.Runtime
             Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
             
             Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
-            Matrix4x4 maskRotateToSDF = Matrix4x4.identity; // Rotation removed
-            
-            // Final Unified Matrix
-            Matrix4x4 localToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
+            Matrix4x4 localToMaskSDF = maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
 
             m_MaskMaterial.SetVector(_MaskWorldToLocalX, localToMaskSDF.GetRow(0));
             m_MaskMaterial.SetVector(_MaskWorldToLocalY, localToMaskSDF.GetRow(1));
             m_MaskMaterial.SetVector(_MaskWorldToLocalZ, localToMaskSDF.GetRow(2));
             m_MaskMaterial.SetVector(_MaskWorldToLocalW, localToMaskSDF.GetRow(3));
 
-            // 2. Base Mask Data
+            // Базовые данные маски
             Vector2 maskScale = maskShape.ShapeScale;
             Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y); 
             
@@ -187,7 +208,7 @@ namespace ProceduralShapes.Runtime
             m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
             m_MaskMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
             
-            // 3. Fill Data
+            // Данные заливки и градиентов маски
             Texture gradientTex = maskShape.mainTexture; 
             m_MaskMaterial.SetTexture("_MaskTex", gradientTex != null ? gradientTex : Texture2D.whiteTexture);
 
@@ -200,10 +221,9 @@ namespace ProceduralShapes.Runtime
             m_MaskMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, (float)maskRowIndex));
             m_MaskMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, maskAlphaMult, 0));
 
-            // 4. Boolean Operations
+            // Сбор булевых операций для маски
             int activeCount = 0;
-            // For booleans, we just need World -> MaskSDF
-            Matrix4x4 worldToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal;
+            Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
             
             ProceduralShape.s_VisitedShapes.Clear();
             ProceduralShape.s_VisitedShapes.Add(maskShape);
@@ -257,11 +277,8 @@ namespace ProceduralShapes.Runtime
             
             Vector3 localGeomCenter = new Vector3((0.5f - pivot.x) * size.x, (0.5f - pivot.y) * size.y, 0f) + (Vector3)pivotOffset;
             Vector3 worldGeomCenter = otherRect.TransformPoint(localGeomCenter);
-            
-            // Position in Mask SDF Space
             Vector3 posInMaskSDF = worldToMaskSDF.MultiplyPoint3x4(worldGeomCenter);
             
-            // Relative rotation: Other World Rotation - Mask World Rotation
             float maskWorldRot = m_CachedMask.Shape.transform.eulerAngles.z;
             float otherWorldRot = otherRect.eulerAngles.z;
             float relativeRotation = otherWorldRot - maskWorldRot;

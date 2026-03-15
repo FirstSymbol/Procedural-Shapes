@@ -6,9 +6,14 @@ using UnityEditor.UIElements;
 using ProceduralShapes.Runtime;
 using System.Collections.Generic;
 using System;
+using System.IO;
 
 namespace ProceduralShapes.Editor
 {
+    /// <summary>
+    /// Пользовательский редактор для компонента ProceduralShape.
+    /// Использует UI Toolkit для отрисовки инспектора и Handles для Scene View.
+    /// </summary>
     [CustomEditor(typeof(ProceduralShape))]
     [CanEditMultipleObjects]
     public class ProceduralShapeEditor : UnityEditor.UI.GraphicEditor
@@ -39,8 +44,29 @@ namespace ProceduralShapes.Editor
             m_BooleanOperations = serializedObject.FindProperty("BooleanOperations");
             m_Effects = serializedObject.FindProperty("Effects");
 
-            m_VisualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Assets/_ProjectContent/GitPlugins/ProceduralShapes/Editor/UI/ProceduralShapeEditor.uxml");
-            m_StyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Assets/_ProjectContent/GitPlugins/ProceduralShapes/Editor/UI/ProceduralShapeEditorStyle.uss");
+            LoadEditorResources();
+        }
+
+        /// <summary> Загружает UXML и USS ассеты, пытаясь найти их в проекте, если пути по умолчанию неверны. </summary>
+        private void LoadEditorResources()
+        {
+            string defaultUxmlPath = "Assets/_ProjectContent/GitPlugins/ProceduralShapes/Editor/UI/ProceduralShapeEditor.uxml";
+            string defaultUssPath = "Assets/_ProjectContent/GitPlugins/ProceduralShapes/Editor/UI/ProceduralShapeEditorStyle.uss";
+
+            m_VisualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(defaultUxmlPath);
+            m_StyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(defaultUssPath);
+
+            if (m_VisualTree == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("ProceduralShapeEditor t:VisualTreeAsset");
+                if (guids.Length > 0) m_VisualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+
+            if (m_StyleSheet == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("ProceduralShapeEditorStyle t:StyleSheet");
+                if (guids.Length > 0) m_StyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
         }
 
         public override VisualElement CreateInspectorGUI()
@@ -55,7 +81,7 @@ namespace ProceduralShapes.Editor
             m_EffectsListContainer = root.Q<VisualElement>("effects-list-container");
             m_SpecificContainer = root.Q<VisualElement>("shape-specific-params");
 
-            // 1. Link Scale Logic
+            // --- 1. Логика связывания масштаба (Link Scale) ---
             Button linkButton = root.Q<Button>("link-scale-button");
             UpdateLinkScaleIcon(linkButton);
             linkButton.clicked += () => {
@@ -68,7 +94,7 @@ namespace ProceduralShapes.Editor
                 UpdateLinkScaleIcon(linkButton);
             };
 
-            // Track changes to scale and sync X/Y only when needed, avoiding focus theft
+            // Синхронизация X и Y при изменении одного из них, если Link Scale включен
             root.TrackPropertyValue(m_ShapeScale2D, (prop) => {
                 if (m_LinkScale.boolValue)
                 {
@@ -81,11 +107,11 @@ namespace ProceduralShapes.Editor
                 }
             });
 
-            // 2. Shape Specific Params
+            // --- 2. Специфичные параметры для разных типов фигур ---
             root.TrackPropertyValue(m_ShapeType, (prop) => RefreshShapeSpecificParams());
             RefreshShapeSpecificParams();
 
-            // 3. Lists
+            // --- 3. Списки булевых операций и эффектов ---
             RefreshBooleanList();
             root.Q<Button>("add-boolean-button").clicked += () => {
                 m_BooleanOperations.InsertArrayElementAtIndex(m_BooleanOperations.arraySize);
@@ -96,20 +122,17 @@ namespace ProceduralShapes.Editor
             RefreshEffectsList();
             root.Q<Button>("add-effect-button").clicked += ShowEffectMenu;
 
-            // 4. Tools
+            // --- 4. Инструменты (Запекание коллайдера) ---
             root.Q<Button>("bake-collider-button").clicked += () => BakeToCollider((ProceduralShape)target);
 
-            // 5. Raycast Controls
+            // --- 5. Контролы для Raycast (IMGUI контейнер для обратной совместимости) ---
             VisualElement raycastContainer = root.Q<VisualElement>("raycast-controls");
             if (raycastContainer != null)
             {
                 raycastContainer.Add(new IMGUIContainer(() => RaycastControlsGUI()));
             }
 
-            // CRITICAL: Bind the root ONCE at the end. 
-            // Removed redundant .Bind() calls from sub-methods.
             root.Bind(serializedObject);
-
             return root;
         }
 
@@ -119,6 +142,7 @@ namespace ProceduralShapes.Editor
             btn.style.color = m_LinkScale.boolValue ? new Color(0.3f, 0.6f, 1f) : Color.white;
         }
 
+        /// <summary> Обновляет блок параметров, специфичных для выбранного типа фигуры (ShapeType). </summary>
         private void RefreshShapeSpecificParams()
         {
             if (m_SpecificContainer == null) return;
@@ -183,7 +207,6 @@ namespace ProceduralShapes.Editor
                     break;
             }
             
-            // Re-bind specific container to ensure new fields are connected
             m_SpecificContainer.Bind(serializedObject);
         }
 
@@ -197,6 +220,7 @@ namespace ProceduralShapes.Editor
             return row;
         }
 
+        /// <summary> Перерисовывает список булевых операций. </summary>
         private void RefreshBooleanList()
         {
             if (m_BooleanListContainer == null) return;
@@ -238,6 +262,7 @@ namespace ProceduralShapes.Editor
             m_BooleanListContainer.Bind(serializedObject);
         }
 
+        /// <summary> Перерисовывает список активных эффектов. </summary>
         private void RefreshEffectsList()
         {
             if (m_EffectsListContainer == null) return;
@@ -357,6 +382,10 @@ namespace ProceduralShapes.Editor
 
         // --- SCENE VIEW HANDLES ---
 
+        /// <summary>
+        /// Отрисовывает интерактивные элементы управления в Scene View.
+        /// Позволяет изменять параметры фигуры (радиусы, точки линии, соотношение звезд) перетаскиванием мыши.
+        /// </summary>
         private void OnSceneGUI()
         {
             ProceduralShape shape = (ProceduralShape)target;
@@ -368,6 +397,7 @@ namespace ProceduralShapes.Editor
             float hw = size.x * 0.5f * shape.ShapeScale.x;
             float hh = size.y * 0.5f * shape.ShapeScale.y;
             
+            // Матрица трансформации для Scene View с учетом пивота и геометрического центра
             Matrix4x4 geomMatrix = rt.localToWorldMatrix * Matrix4x4.Translate((Vector3)rt.rect.center + (Vector3)pivotOffset);
 
             using (new Handles.DrawingScope(geomMatrix))
@@ -397,6 +427,7 @@ namespace ProceduralShapes.Editor
             }
         }
 
+        /// <summary> Отрисовывает ручки для изменения радиусов скругления прямоугольника. </summary>
         private void DrawRectangleHandles(ProceduralShape shape, float hw, float hh)
         {
             Vector4 radii = shape.m_CornerRadius;
@@ -542,6 +573,7 @@ namespace ProceduralShapes.Editor
             }
         }
 
+        /// <summary> Отрисовывает ручки для управления смещением, углом и масштабом градиента. </summary>
         private void DrawGradientHandles(ProceduralShape shape, float hw, float hh)
         {
             if (shape.MainFill.Type == FillType.Solid || shape.MainFill.Type == FillType.Pattern) return;
@@ -577,6 +609,7 @@ namespace ProceduralShapes.Editor
             }
         }
 
+        /// <summary> Кастомный вид ручки управления для более современного вида редактора. </summary>
         private void ModernHandleCap(int controlID, Vector3 position, Quaternion rotation, float size, EventType eventType)
         {
             if (eventType == EventType.Layout)
@@ -615,6 +648,7 @@ namespace ProceduralShapes.Editor
             }
         }
 
+        /// <summary> Генерирует массив точек для PolygonCollider2D на основе текущей формы. </summary>
         private void BakeToCollider(ProceduralShape shape)
         {
             PolygonCollider2D collider = shape.GetComponent<PolygonCollider2D>();
