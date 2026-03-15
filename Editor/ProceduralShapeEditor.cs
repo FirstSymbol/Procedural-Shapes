@@ -68,12 +68,11 @@ namespace ProceduralShapes.Editor
                 UpdateLinkScaleIcon(linkButton);
             };
 
-            PropertyField scaleField = root.Q<PropertyField>("scale-field");
-            scaleField.RegisterValueChangeCallback(evt => {
+            // Track changes to scale and sync X/Y only when needed, avoiding focus theft
+            root.TrackPropertyValue(m_ShapeScale2D, (prop) => {
                 if (m_LinkScale.boolValue)
                 {
-                    serializedObject.Update(); // Ensure we have latest
-                    Vector2 val = m_ShapeScale2D.vector2Value;
+                    Vector2 val = prop.vector2Value;
                     if (Mathf.Abs(val.x - val.y) > 0.001f)
                     {
                         m_ShapeScale2D.vector2Value = new Vector2(val.x, val.x);
@@ -101,9 +100,14 @@ namespace ProceduralShapes.Editor
             root.Q<Button>("bake-collider-button").clicked += () => BakeToCollider((ProceduralShape)target);
 
             // 5. Raycast Controls
-            root.Q<VisualElement>("raycast-controls").Add(new IMGUIContainer(() => RaycastControlsGUI()));
+            VisualElement raycastContainer = root.Q<VisualElement>("raycast-controls");
+            if (raycastContainer != null)
+            {
+                raycastContainer.Add(new IMGUIContainer(() => RaycastControlsGUI()));
+            }
 
-            // CRITICAL: Bind the root to the serialized object
+            // CRITICAL: Bind the root ONCE at the end. 
+            // Removed redundant .Bind() calls from sub-methods.
             root.Bind(serializedObject);
 
             return root;
