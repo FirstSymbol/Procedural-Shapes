@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -17,6 +17,8 @@ namespace ProceduralShapes.Runtime
         private Graphic m_Graphic;
         private ProceduralShapeMask m_CachedMask;
         private Material m_MaskMaterial;
+        private Material m_CustomBaseMat;
+        private static Shader s_SoftMaskShader;
         
         // Shader Props
         private static readonly int _MaskWorldToLocalX = Shader.PropertyToID("_MaskWorldToLocalX");
@@ -60,8 +62,15 @@ namespace ProceduralShapes.Runtime
 
             if (m_MaskMaterial != null)
             {
-                if (Application.isPlaying) Destroy(m_MaskMaterial);
-                else DestroyImmediate(m_MaskMaterial);
+                ProceduralMaterialPool.ReleaseMaterial(m_MaskMaterial);
+                m_MaskMaterial = null;
+            }
+            
+            if (m_CustomBaseMat != null)
+            {
+                if (Application.isPlaying) Destroy(m_CustomBaseMat);
+                else DestroyImmediate(m_CustomBaseMat);
+                m_CustomBaseMat = null;
             }
             
             if (m_Graphic != null)
@@ -96,14 +105,16 @@ namespace ProceduralShapes.Runtime
         private Quaternion m_LastRot;
         private Vector3 m_LastScale;
 
+        private void OnTransformParentChanged()
+        {
+            RefreshMaskSubscription();
+            if (m_Graphic != null) m_Graphic.SetMaterialDirty();
+        }
+
         private void Update()
         {
             if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null)
-            {
-                var currentMask = GetComponentInParent<ProceduralShapeMask>();
-                if (currentMask != m_CachedMask) RefreshMaskSubscription();
                 return;
-            }
 
             bool dirty = false;
             
@@ -200,12 +211,17 @@ namespace ProceduralShapes.Runtime
             ShaderState state = ProceduralMaterialPool.TempState;
             state.Clear();
 
-            // Для SoftMaskable используем специальный базовый материал
-            Material customBaseMat = new Material(Shader.Find("UI/ProceduralShapes/SoftMaskedImage"));
-            customBaseMat.CopyPropertiesFromMaterial(baseMaterial);
-            customBaseMat.shaderKeywords = baseMaterial.shaderKeywords;
+            if (s_SoftMaskShader == null) s_SoftMaskShader = Shader.Find("UI/ProceduralShapes/SoftMaskedImage");
+            if (m_CustomBaseMat == null)
+            {
+                m_CustomBaseMat = new Material(s_SoftMaskShader);
+                m_CustomBaseMat.hideFlags = HideFlags.HideAndDontSave;
+            }
             
-            state.BaseMatId = customBaseMat.ComputeCRC(); // Хэш на основе шейдера/свойств, но для простоты мы используем GetInstanceID базового
+            m_CustomBaseMat.CopyPropertiesFromMaterial(baseMaterial);
+            m_CustomBaseMat.shaderKeywords = baseMaterial.shaderKeywords;
+            
+            state.BaseMatId = m_CustomBaseMat.ComputeCRC(); 
             state.HasMask = true;
             state.MaskMatrix = localToMaskSDF;
             state.MaskParams = new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness + maskShape.m_EdgeSoftness);
@@ -224,18 +240,14 @@ namespace ProceduralShapes.Runtime
                 System.Array.Copy(m_ShaderSize, state.MaskBoolSize, activeCount);
             }
 
-            Material matToUse = ProceduralMaterialPool.GetMaterial(state, customBaseMat);
+            Material matToUse = ProceduralMaterialPool.GetMaterial(state, m_CustomBaseMat);
             
-            if (m_MaskMaterial != null && m_MaskMaterial != matToUse) 
+            if (m_MaskMaterial != null) 
             {
                 ProceduralMaterialPool.ReleaseMaterial(m_MaskMaterial);
             }
             
             m_MaskMaterial = matToUse;
-
-            // customBaseMat больше не нужен, пул скопировал его параметры в matToUse
-            if (Application.isPlaying) Destroy(customBaseMat);
-            else DestroyImmediate(customBaseMat);
 
             return m_MaskMaterial;
         }

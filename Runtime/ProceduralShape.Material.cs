@@ -151,7 +151,7 @@ namespace ProceduralShapes.Runtime
 
             Material matToUse = ProceduralMaterialPool.GetMaterial(state, baseMaterial);
             
-            if (m_InstanceMaterial != null && m_InstanceMaterial != matToUse) 
+            if (m_InstanceMaterial != null) 
             {
                 ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
             }

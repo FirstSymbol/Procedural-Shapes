@@ -261,12 +261,14 @@ namespace ProceduralShapes.Runtime
             m_IsNotifying = false;
         }
 
+#if UNITY_EDITOR
         protected override void OnValidate()
         {
             base.OnValidate();
             RefreshDependencies();
             SetAllDirty();
         }
+#endif
 
         protected override void Awake()
         {
@@ -363,7 +365,9 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
-        private Matrix4x4 m_LastLocalToWorld;
+        private Vector3 m_LastPos;
+        private Quaternion m_LastRot;
+        private Vector3 m_LastScale;
 
         private void LateUpdate()
         {
@@ -380,10 +384,12 @@ namespace ProceduralShapes.Runtime
                 dirty = true;
             }
 
-            Matrix4x4 currentMatrix = rectTransform.localToWorldMatrix;
-            if (m_LastLocalToWorld != currentMatrix)
+            Transform t = transform;
+            if (m_LastPos != t.position || m_LastRot != t.rotation || m_LastScale != t.lossyScale)
             {
-                m_LastLocalToWorld = currentMatrix;
+                m_LastPos = t.position;
+                m_LastRot = t.rotation;
+                m_LastScale = t.lossyScale;
                 dirty = true;
             }
 
@@ -391,18 +397,6 @@ namespace ProceduralShapes.Runtime
             {
                 if (op.SourceShape != null && CheckDependencyDirty(op.SourceShape)) 
                     dirty = true;
-            }
-
-            // Автоматический поиск маски в родительской иерархии
-            if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
-            {
-                var mask = GetComponentInParent<ProceduralShapeMask>();
-                if (mask != m_CachedMask)
-                {
-                    m_CachedMask = mask;
-                    RefreshDependencies();
-                    dirty = true;
-                }
             }
 
             if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled && m_CachedMask.Shape != null)
@@ -429,6 +423,8 @@ namespace ProceduralShapes.Runtime
 
             if (!isActiveAndEnabled) return;
 
+            m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
+
             HashSet<ProceduralShape> uniqueSources = new HashSet<ProceduralShape>();
             foreach (var op in BooleanOperations)
             {
@@ -453,8 +449,27 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
+        private struct TransformData 
+        {
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 lossyScale;
+            
+            public TransformData(Transform t)
+            {
+                position = t.position;
+                rotation = t.rotation;
+                lossyScale = t.lossyScale;
+            }
+            
+            public bool Equals(TransformData other)
+            {
+                return position == other.position && rotation == other.rotation && lossyScale == other.lossyScale;
+            }
+        }
+
         private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
-        private Dictionary<int, Matrix4x4> m_KnownDependencyMatrices = new Dictionary<int, Matrix4x4>();
+        private Dictionary<int, TransformData> m_KnownDependencyTransforms = new Dictionary<int, TransformData>();
 
         /// <summary> Проверяет, изменилась ли зависимая фигура. </summary>
         private bool CheckDependencyDirty(ProceduralShape other)
@@ -467,10 +482,10 @@ namespace ProceduralShapes.Runtime
                 return true; 
             }
 
-            Matrix4x4 currentMatrix = other.rectTransform.localToWorldMatrix;
-            if (!m_KnownDependencyMatrices.TryGetValue(id, out Matrix4x4 lastMatrix) || lastMatrix != currentMatrix)
+            TransformData currentData = new TransformData(other.transform);
+            if (!m_KnownDependencyTransforms.TryGetValue(id, out TransformData lastData) || !lastData.Equals(currentData))
             {
-                m_KnownDependencyMatrices[id] = currentMatrix;
+                m_KnownDependencyTransforms[id] = currentData;
                 return true;
             }
 
