@@ -62,7 +62,10 @@ namespace ProceduralShapes.Runtime
             Matrix4x4 worldToLocal = rectTransform.worldToLocalMatrix;
             Vector2 selfCenterOffset = GetGeometricCenterOffset();
             m_ActiveBoolCount = 0;
+            s_VisitedShapes.Clear();
+            s_VisitedShapes.Add(this);
             CollectBooleanOps(this, BooleanOperation.Union, ref m_ActiveBoolCount, worldToLocal, selfCenterOffset);
+            s_VisitedShapes.Clear();
 
             bool hasMask = false;
             Vector4 maskParams = Vector4.zero;
@@ -106,7 +109,11 @@ namespace ProceduralShapes.Runtime
                 maskFillParams = new Vector4((float)mFill.Type, mFill.GradientAngle, mFill.GradientScale, (float)maskRowIndex);
                 maskFillOffset = new Vector4(mFill.GradientOffset.x, mFill.GradientOffset.y, maskAlphaMult, 0);
                 Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
+                
+                s_VisitedShapes.Clear();
+                s_VisitedShapes.Add(maskS);
                 CollectMaskBooleanOps(maskS, BooleanOperation.Union, ref m_ActiveMaskBoolCount, worldToMaskSDF);
+                s_VisitedShapes.Clear();
             }
 
             // 2. Compute "Style Key" (Excluding transforms for pooling/reuse)
@@ -236,9 +243,10 @@ namespace ProceduralShapes.Runtime
             {
                 if (count >= MAX_OPS) return;
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == this) continue; 
+                if (s_VisitedShapes.Contains(input.SourceShape)) continue; 
 
                 ProceduralShape other = input.SourceShape;
+                s_VisitedShapes.Add(other);
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)
                 {
@@ -284,9 +292,10 @@ namespace ProceduralShapes.Runtime
             {
                 if (count >= MAX_OPS) return;
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == m_CachedMask.Shape) continue;
+                if (s_VisitedShapes.Contains(input.SourceShape)) continue;
 
                 ProceduralShape other = input.SourceShape;
+                s_VisitedShapes.Add(other);
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)
                 {

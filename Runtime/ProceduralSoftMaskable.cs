@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
+using UnityEngine;
 using UnityEngine.UI;
 
 namespace ProceduralShapes.Runtime
@@ -179,7 +180,11 @@ namespace ProceduralShapes.Runtime
             int activeCount = 0;
             // For booleans, we just need World -> MaskSDF
             Matrix4x4 worldToMaskSDF = maskRotateToSDF * maskCenterTranslate * maskWorldToLocal;
+            
+            ProceduralShape.s_VisitedShapes.Clear();
+            ProceduralShape.s_VisitedShapes.Add(maskShape);
             CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, worldToMaskSDF);
+            ProceduralShape.s_VisitedShapes.Clear();
             
             m_MaskMaterial.SetInt(_MaskBoolParams, activeCount);
             if (activeCount > 0)
@@ -199,9 +204,10 @@ namespace ProceduralShapes.Runtime
             {
                 if (count >= MAX_OPS) return;
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == m_CachedMask.Shape) continue;
+                if (ProceduralShape.s_VisitedShapes.Contains(input.SourceShape)) continue;
 
                 ProceduralShape other = input.SourceShape;
+                ProceduralShape.s_VisitedShapes.Add(other);
                 
                 BooleanOperation effectiveOp = input.Operation;
                 if (parentOp == BooleanOperation.Subtraction)

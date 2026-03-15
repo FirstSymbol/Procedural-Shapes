@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -59,6 +60,7 @@ namespace ProceduralShapes.Runtime
                     maxExpand = Mathf.Max(maxExpand, bevel.Distance);
             }
             
+            maxExpand = Mathf.Max(maxExpand, m_EdgeSoftness);
             maxExpand = Mathf.Max(maxExpand, mainBlurRadius * 2f);
             
             minX -= maxExpand;
@@ -197,30 +199,59 @@ namespace ProceduralShapes.Runtime
             return new Vector4(packedRow, type, packedNoiseAmount, scaleOrNoise);
         }
 
+        internal static readonly HashSet<ProceduralShape> s_VisitedShapes = new HashSet<ProceduralShape>();
+
         private void ExpandBoundsRecursive(ProceduralShape currentShape, ref float minX, ref float maxX, ref float minY, ref float maxY, Matrix4x4 rootWorldToLocal)
+        {
+            s_VisitedShapes.Clear();
+            s_VisitedShapes.Add(this);
+            ExpandBoundsRecursiveInternal(currentShape, ref minX, ref maxX, ref minY, ref maxY, rootWorldToLocal);
+            s_VisitedShapes.Clear();
+        }
+
+        private void ExpandBoundsRecursiveInternal(ProceduralShape currentShape, ref float minX, ref float maxX, ref float minY, ref float maxY, Matrix4x4 rootWorldToLocal)
         {
             if (currentShape == null) return;
             
             foreach (var input in currentShape.BooleanOperations)
             {
                 if (input.SourceShape == null || !input.SourceShape.isActiveAndEnabled || input.Operation == BooleanOperation.None) continue;
-                if (input.SourceShape == this) continue;
+                if (s_VisitedShapes.Contains(input.SourceShape)) continue;
 
                 ProceduralShape other = input.SourceShape;
-                RectTransform rt = other.rectTransform;
+                s_VisitedShapes.Add(other);
                 
-                rt.GetWorldCorners(s_Corners);
+                RectTransform rt = other.rectTransform;
+                Rect r = rt.rect;
+                
+                Vector2 scale = other.ShapeScale;
+                Vector2 pivotOffset = other.GetGeometricCenterOffset();
+                
+                float margin = other.m_EdgeSoftness;
+                if (other.m_InternalPadding < 0) margin -= other.m_InternalPadding;
+                
+                float hw = r.width * 0.5f * scale.x + margin;
+                float hh = r.height * 0.5f * scale.y + margin;
+                
+                float cx = r.center.x + pivotOffset.x;
+                float cy = r.center.y + pivotOffset.y;
+
+                s_Corners[0] = new Vector3(cx - hw, cy - hh, 0);
+                s_Corners[1] = new Vector3(cx - hw, cy + hh, 0);
+                s_Corners[2] = new Vector3(cx + hw, cy + hh, 0);
+                s_Corners[3] = new Vector3(cx + hw, cy - hh, 0);
                 
                 for (int i = 0; i < 4; i++)
                 {
-                    Vector3 localPt = rootWorldToLocal.MultiplyPoint3x4(s_Corners[i]);
+                    Vector3 worldPt = rt.TransformPoint(s_Corners[i]);
+                    Vector3 localPt = rootWorldToLocal.MultiplyPoint3x4(worldPt);
                     minX = Mathf.Min(minX, localPt.x);
                     maxX = Mathf.Max(maxX, localPt.x);
                     minY = Mathf.Min(minY, localPt.y);
                     maxY = Mathf.Max(maxY, localPt.y);
                 }
 
-                ExpandBoundsRecursive(other, ref minX, ref maxX, ref minY, ref maxY, rootWorldToLocal);
+                ExpandBoundsRecursiveInternal(other, ref minX, ref maxX, ref minY, ref maxY, rootWorldToLocal);
             }
         }
 
