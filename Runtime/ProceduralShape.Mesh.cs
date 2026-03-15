@@ -257,6 +257,7 @@ namespace ProceduralShapes.Runtime
                 
                 float margin = other.m_EdgeSoftness;
                 if (other.m_InternalPadding < 0) margin -= other.m_InternalPadding;
+                margin += input.Smoothness; // Учитываем радиус сглаживания булевой операции
                 
                 float hw = r.width * 0.5f * scale.x + margin;
                 float hh = r.height * 0.5f * scale.y + margin;
@@ -287,11 +288,32 @@ namespace ProceduralShapes.Runtime
                             maxY = Mathf.Max(maxY, lcp1.y, lcp2.y);
                         }
                     }
-                    float thick = other.m_ShapePath.Thickness * 0.5f;
+                    float thick = other.m_ShapePath.Thickness * 0.5f + margin;
                     minX -= thick; maxX += thick; minY -= thick; maxY += thick;
+                }
+                else if (other.m_ShapeType == ShapeType.Line)
+                {
+                    Vector3 worldStart = rt.TransformPoint(other.m_LineStart + pivotOffset);
+                    Vector3 worldEnd = rt.TransformPoint(other.m_LineEnd + pivotOffset);
+                    Vector3 localStart = rootWorldToLocal.MultiplyPoint3x4(worldStart);
+                    Vector3 localEnd = rootWorldToLocal.MultiplyPoint3x4(worldEnd);
+                    
+                    float lineMargin = margin + other.m_LineWidth * 0.5f;
+                    
+                    minX = Mathf.Min(minX, localStart.x - lineMargin, localEnd.x - lineMargin);
+                    maxX = Mathf.Max(maxX, localStart.x + lineMargin, localEnd.x + lineMargin);
+                    minY = Mathf.Min(minY, localStart.y - lineMargin, localEnd.y - lineMargin);
+                    maxY = Mathf.Max(maxY, localStart.y + lineMargin, localEnd.y + lineMargin);
                 }
                 else
                 {
+                    if (other.m_ShapeType == ShapeType.Rectangle && other.m_CornerSmoothing > 0.001f)
+                    {
+                        // Увеличение границ для скругленных (squircle) углов
+                        hw += Mathf.Max(other.m_CornerRadius.x, other.m_CornerRadius.y, other.m_CornerRadius.z, other.m_CornerRadius.w) * 0.5f;
+                        hh += Mathf.Max(other.m_CornerRadius.x, other.m_CornerRadius.y, other.m_CornerRadius.z, other.m_CornerRadius.w) * 0.5f;
+                    }
+
                     s_Corners[0] = new Vector3(cx - hw, cy - hh, 0);
                     s_Corners[1] = new Vector3(cx - hw, cy + hh, 0);
                     s_Corners[2] = new Vector3(cx + hw, cy + hh, 0);

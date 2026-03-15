@@ -174,6 +174,8 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        internal static readonly HashSet<ProceduralShape> ActiveShapes = new HashSet<ProceduralShape>();
+
         /// <summary> Отключить отрисовку, сохранив функционал резака. </summary>
         public bool DisableRendering
         {
@@ -223,7 +225,11 @@ namespace ProceduralShapes.Runtime
                 if (s_DefaultMaterial == null)
                 {
                     Shader shader = GetShapeShader();
-                    if (shader != null) s_DefaultMaterial = new Material(shader);
+                    if (shader != null) 
+                    {
+                        s_DefaultMaterial = new Material(shader);
+                        s_DefaultMaterial.hideFlags = HideFlags.HideAndDontSave;
+                    }
                 }
                 return s_DefaultMaterial ?? base.defaultMaterial;
             }
@@ -262,28 +268,91 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
+        protected override void Awake()
+        {
+            base.Awake();
+            m_InstanceMaterial = null;
+            m_CachedMask = null;
+            m_SubscribedSources.Clear();
+            EnsureCanvasChannels();
+        }
+
         protected override void OnEnable() 
         { 
             base.OnEnable(); 
+            ActiveShapes.Add(this);
             m_RectTransform = GetComponent<RectTransform>();
             RefreshDependencies();
+            EnsureCanvasChannels();
             SetAllDirty(); 
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
+                UnityEditor.EditorApplication.update += EditorUpdate;
+            }
+#endif
         }
 
         protected override void OnDisable()
         {
             base.OnDisable();
+            ActiveShapes.Remove(this);
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.update -= EditorUpdate;
+#endif
             foreach (var s in m_SubscribedSources)
             {
                 if (s != null) s.OnShapeChanged -= HandleDependencyChanged;
             }
             m_SubscribedSources.Clear();
+            OnShapeChanged?.Invoke();
         }
+
+        private void EnsureCanvasChannels()
+        {
+            if (canvas != null)
+            {
+                var channels = AdditionalCanvasShaderChannels.TexCoord1 | AdditionalCanvasShaderChannels.TexCoord2 | AdditionalCanvasShaderChannels.TexCoord3;
+                if ((canvas.additionalShaderChannels & channels) != channels)
+                {
+                    canvas.additionalShaderChannels |= channels;
+                }
+            }
+        }
+
+#if UNITY_EDITOR
+        private void EditorUpdate()
+        {
+            if (this == null || !isActiveAndEnabled) return;
+            CheckForChanges();
+        }
+
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void InitEditorHooks()
+        {
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved += (scene) => ForceUpdateAllShapes();
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened += (scene, mode) => ForceUpdateAllShapes();
+        }
+
+        private static void ForceUpdateAllShapes()
+        {
+            ProceduralMaterialPool.ClearAll();
+            foreach (var shape in ActiveShapes)
+            {
+                if (shape != null)
+                {
+                    shape.m_InstanceMaterial = null;
+                    shape.SetAllDirty();
+                }
+            }
+        }
+#endif
         
         protected override void OnTransformParentChanged() 
         { 
             base.OnTransformParentChanged(); 
             m_CachedMask = null; 
+            EnsureCanvasChannels();
             RefreshDependencies();
             SetAllDirty(); 
         }
@@ -294,6 +363,8 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
+        private Matrix4x4 m_LastLocalToWorld;
+
         private void LateUpdate()
         {
             CheckForChanges();
@@ -301,10 +372,25 @@ namespace ProceduralShapes.Runtime
 
         private void CheckForChanges()
         {
+            bool dirty = false;
+            
             if (transform.hasChanged)
             {
                 transform.hasChanged = false;
-                SetAllDirty();
+                dirty = true;
+            }
+
+            Matrix4x4 currentMatrix = rectTransform.localToWorldMatrix;
+            if (m_LastLocalToWorld != currentMatrix)
+            {
+                m_LastLocalToWorld = currentMatrix;
+                dirty = true;
+            }
+
+            foreach (var op in BooleanOperations)
+            {
+                if (op.SourceShape != null && CheckDependencyDirty(op.SourceShape)) 
+                    dirty = true;
             }
 
             // Автоматический поиск маски в родительской иерархии
@@ -315,8 +401,18 @@ namespace ProceduralShapes.Runtime
                 {
                     m_CachedMask = mask;
                     RefreshDependencies();
-                    SetAllDirty();
+                    dirty = true;
                 }
+            }
+
+            if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled && m_CachedMask.Shape != null)
+            {
+                if (CheckDependencyDirty(m_CachedMask.Shape)) dirty = true;
+            }
+
+            if (dirty)
+            {
+                SetAllDirty();
             }
         }
 
@@ -358,6 +454,7 @@ namespace ProceduralShapes.Runtime
         }
 
         private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
+        private Dictionary<int, Matrix4x4> m_KnownDependencyMatrices = new Dictionary<int, Matrix4x4>();
 
         /// <summary> Проверяет, изменилась ли зависимая фигура. </summary>
         private bool CheckDependencyDirty(ProceduralShape other)
@@ -368,6 +465,13 @@ namespace ProceduralShapes.Runtime
             if (other.transform.hasChanged)
             {
                 return true; 
+            }
+
+            Matrix4x4 currentMatrix = other.rectTransform.localToWorldMatrix;
+            if (!m_KnownDependencyMatrices.TryGetValue(id, out Matrix4x4 lastMatrix) || lastMatrix != currentMatrix)
+            {
+                m_KnownDependencyMatrices[id] = currentMatrix;
+                return true;
             }
 
             if (!m_KnownDependencyVersions.TryGetValue(id, out uint lastVer) || lastVer != currentVer)

@@ -160,23 +160,6 @@ namespace ProceduralShapes.Runtime
             if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null)
                 return baseMaterial;
 
-            if (m_MaskMaterial == null)
-            {
-                m_MaskMaterial = new Material(Shader.Find("UI/ProceduralShapes/SoftMaskedImage"));
-                m_MaskMaterial.hideFlags = HideFlags.HideAndDontSave;
-            }
-            
-            m_MaskMaterial.CopyPropertiesFromMaterial(baseMaterial);
-            m_MaskMaterial.shaderKeywords = baseMaterial.shaderKeywords;
-
-            UpdateMaskData();
-
-            return m_MaskMaterial;
-        }
-
-        /// <summary> Подготавливает и передает все параметры SDF маски в материал. </summary>
-        private void UpdateMaskData()
-        {
             ProceduralShape maskShape = m_CachedMask.Shape;
             RectTransform maskRT = maskShape.rectTransform;
             RectTransform imageRT = m_Graphic.rectTransform;
@@ -195,33 +178,16 @@ namespace ProceduralShapes.Runtime
             Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
             Matrix4x4 localToMaskSDF = maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
 
-            m_MaskMaterial.SetVector(_MaskWorldToLocalX, localToMaskSDF.GetRow(0));
-            m_MaskMaterial.SetVector(_MaskWorldToLocalY, localToMaskSDF.GetRow(1));
-            m_MaskMaterial.SetVector(_MaskWorldToLocalZ, localToMaskSDF.GetRow(2));
-            m_MaskMaterial.SetVector(_MaskWorldToLocalW, localToMaskSDF.GetRow(3));
-
-            // Базовые данные маски
             Vector2 maskScale = maskShape.ShapeScale;
             Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y); 
-            
-            m_MaskMaterial.SetVector(_MaskParams, new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness + maskShape.m_EdgeSoftness));
-            m_MaskMaterial.SetVector(_MaskSize, new Vector4(maskSize.x, maskSize.y, 0, 0));
-            m_MaskMaterial.SetVector(_MaskShape, maskShape.GetPackedShapeParams());
-            
-            // Данные заливки и градиентов маски
-            Texture gradientTex = maskShape.mainTexture; 
-            m_MaskMaterial.SetTexture("_MaskTex", gradientTex != null ? gradientTex : Texture2D.whiteTexture);
 
+            Texture gradientTex = maskShape.mainTexture; 
             ShapeFill fill = maskShape.MainFill;
             int maskRowIndex = GradientAtlasManager.GetAtlasRow(fill);
 
             float maskAlphaMult = maskShape.color.a;
             if (fill.Type == FillType.Solid) maskAlphaMult *= fill.SolidColor.a;
 
-            m_MaskMaterial.SetVector(_MaskFillParams, new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, (float)maskRowIndex));
-            m_MaskMaterial.SetVector(_MaskFillOffset, new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, maskAlphaMult, 0));
-
-            // Сбор булевых операций для маски
             int activeCount = 0;
             Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
             
@@ -229,15 +195,49 @@ namespace ProceduralShapes.Runtime
             ProceduralShape.s_VisitedShapes.Add(maskShape);
             CollectBooleanOps(maskShape, BooleanOperation.Union, ref activeCount, worldToMaskSDF);
             ProceduralShape.s_VisitedShapes.Clear();
+
+            // --- Использование пула материалов через ShaderState ---
+            ShaderState state = ProceduralMaterialPool.TempState;
+            state.Clear();
+
+            // Для SoftMaskable используем специальный базовый материал
+            Material customBaseMat = new Material(Shader.Find("UI/ProceduralShapes/SoftMaskedImage"));
+            customBaseMat.CopyPropertiesFromMaterial(baseMaterial);
+            customBaseMat.shaderKeywords = baseMaterial.shaderKeywords;
             
-            m_MaskMaterial.SetInt(_MaskBoolParams, activeCount);
+            state.BaseMatId = customBaseMat.ComputeCRC(); // Хэш на основе шейдера/свойств, но для простоты мы используем GetInstanceID базового
+            state.HasMask = true;
+            state.MaskMatrix = localToMaskSDF;
+            state.MaskParams = new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness + maskShape.m_EdgeSoftness);
+            state.MaskSize = new Vector4(maskSize.x, maskSize.y, 0, 0);
+            state.MaskShape = maskShape.GetPackedShapeParams();
+            state.MaskTex = gradientTex;
+            state.MaskFillParams = new Vector4((float)fill.Type, fill.GradientAngle, fill.GradientScale, (float)maskRowIndex);
+            state.MaskFillOffset = new Vector4(fill.GradientOffset.x, fill.GradientOffset.y, maskAlphaMult, 0);
+
+            state.MaskBoolCount = activeCount;
             if (activeCount > 0)
             {
-                m_MaskMaterial.SetVectorArray(_MaskBoolOpType, m_ShaderOps);
-                m_MaskMaterial.SetVectorArray(_MaskBoolShapeParams, m_ShaderShapeParams);
-                m_MaskMaterial.SetVectorArray(_MaskBoolTransform, m_ShaderTransform);
-                m_MaskMaterial.SetVectorArray(_MaskBoolSize, m_ShaderSize);
+                System.Array.Copy(m_ShaderOps, state.MaskBoolOpType, activeCount);
+                System.Array.Copy(m_ShaderShapeParams, state.MaskBoolShapeParams, activeCount);
+                System.Array.Copy(m_ShaderTransform, state.MaskBoolTransform, activeCount);
+                System.Array.Copy(m_ShaderSize, state.MaskBoolSize, activeCount);
             }
+
+            Material matToUse = ProceduralMaterialPool.GetMaterial(state, customBaseMat);
+            
+            if (m_MaskMaterial != null && m_MaskMaterial != matToUse) 
+            {
+                ProceduralMaterialPool.ReleaseMaterial(m_MaskMaterial);
+            }
+            
+            m_MaskMaterial = matToUse;
+
+            // customBaseMat больше не нужен, пул скопировал его параметры в matToUse
+            if (Application.isPlaying) Destroy(customBaseMat);
+            else DestroyImmediate(customBaseMat);
+
+            return m_MaskMaterial;
         }
 
         private void CollectBooleanOps(ProceduralShape currentShape, BooleanOperation parentOp, ref int count, Matrix4x4 worldToMaskSDF)
@@ -288,8 +288,8 @@ namespace ProceduralShapes.Runtime
             m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
             
             Vector3 lossyScaleRatio = new Vector3(
-                otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x, 
-                otherRect.lossyScale.y / m_CachedMask.Shape.transform.lossyScale.y, 
+                m_CachedMask.Shape.transform.lossyScale.x != 0 ? otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x : 0, 
+                m_CachedMask.Shape.transform.lossyScale.y != 0 ? otherRect.lossyScale.y / m_CachedMask.Shape.transform.lossyScale.y : 0, 
                 1f);
             
             float finalW = otherRect.rect.width * lossyScaleRatio.x * shape.ShapeScale.x;
