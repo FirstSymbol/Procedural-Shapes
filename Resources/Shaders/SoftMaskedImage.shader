@@ -183,7 +183,7 @@ Shader "UI/ProceduralShapes/SoftMaskedImage"
                          fillAlpha = tex2D(_MaskTex, float2(0.5, mVCoord)).a; 
                     }
 
-                    color.a *= shapeAlpha * fillAlpha * mBaseAlpha;
+                    color.a = min(color.a, shapeAlpha * fillAlpha * mBaseAlpha);
                 }
 
                 #ifdef UNITY_UI_CLIP_RECT

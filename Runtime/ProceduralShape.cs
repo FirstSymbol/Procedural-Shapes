@@ -174,6 +174,8 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        internal static readonly HashSet<ProceduralShape> ActiveShapes = new HashSet<ProceduralShape>();
+
         /// <summary> Отключить отрисовку, сохранив функционал резака. </summary>
         public bool DisableRendering
         {
@@ -223,7 +225,11 @@ namespace ProceduralShapes.Runtime
                 if (s_DefaultMaterial == null)
                 {
                     Shader shader = GetShapeShader();
-                    if (shader != null) s_DefaultMaterial = new Material(shader);
+                    if (shader != null) 
+                    {
+                        s_DefaultMaterial = new Material(shader);
+                        s_DefaultMaterial.hideFlags = HideFlags.HideAndDontSave;
+                    }
                 }
                 return s_DefaultMaterial ?? base.defaultMaterial;
             }
@@ -255,35 +261,100 @@ namespace ProceduralShapes.Runtime
             m_IsNotifying = false;
         }
 
+#if UNITY_EDITOR
         protected override void OnValidate()
         {
             base.OnValidate();
             RefreshDependencies();
             SetAllDirty();
         }
+#endif
+
+        protected override void Awake()
+        {
+            base.Awake();
+            m_InstanceMaterial = null;
+            m_CachedMask = null;
+            m_SubscribedSources.Clear();
+            EnsureCanvasChannels();
+        }
 
         protected override void OnEnable() 
         { 
             base.OnEnable(); 
+            ActiveShapes.Add(this);
             m_RectTransform = GetComponent<RectTransform>();
             RefreshDependencies();
+            EnsureCanvasChannels();
             SetAllDirty(); 
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
+                UnityEditor.EditorApplication.update += EditorUpdate;
+            }
+#endif
         }
 
         protected override void OnDisable()
         {
             base.OnDisable();
+            ActiveShapes.Remove(this);
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.update -= EditorUpdate;
+#endif
             foreach (var s in m_SubscribedSources)
             {
                 if (s != null) s.OnShapeChanged -= HandleDependencyChanged;
             }
             m_SubscribedSources.Clear();
+            OnShapeChanged?.Invoke();
         }
+
+        private void EnsureCanvasChannels()
+        {
+            if (canvas != null)
+            {
+                var channels = AdditionalCanvasShaderChannels.TexCoord1 | AdditionalCanvasShaderChannels.TexCoord2 | AdditionalCanvasShaderChannels.TexCoord3;
+                if ((canvas.additionalShaderChannels & channels) != channels)
+                {
+                    canvas.additionalShaderChannels |= channels;
+                }
+            }
+        }
+
+#if UNITY_EDITOR
+        private void EditorUpdate()
+        {
+            if (this == null || !isActiveAndEnabled) return;
+            CheckForChanges();
+        }
+
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void InitEditorHooks()
+        {
+            UnityEditor.SceneManagement.EditorSceneManager.sceneSaved += (scene) => ForceUpdateAllShapes();
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened += (scene, mode) => ForceUpdateAllShapes();
+        }
+
+        private static void ForceUpdateAllShapes()
+        {
+            ProceduralMaterialPool.ClearAll();
+            foreach (var shape in ActiveShapes)
+            {
+                if (shape != null)
+                {
+                    shape.m_InstanceMaterial = null;
+                    shape.SetAllDirty();
+                }
+            }
+        }
+#endif
         
         protected override void OnTransformParentChanged() 
         { 
             base.OnTransformParentChanged(); 
             m_CachedMask = null; 
+            EnsureCanvasChannels();
             RefreshDependencies();
             SetAllDirty(); 
         }
@@ -294,6 +365,10 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
+        private Vector3 m_LastPos;
+        private Quaternion m_LastRot;
+        private Vector3 m_LastScale;
+
         private void LateUpdate()
         {
             CheckForChanges();
@@ -301,22 +376,37 @@ namespace ProceduralShapes.Runtime
 
         private void CheckForChanges()
         {
+            bool dirty = false;
+            
             if (transform.hasChanged)
             {
                 transform.hasChanged = false;
-                SetAllDirty();
+                dirty = true;
             }
 
-            // Автоматический поиск маски в родительской иерархии
-            if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
+            Transform t = transform;
+            if (m_LastPos != t.position || m_LastRot != t.rotation || m_LastScale != t.lossyScale)
             {
-                var mask = GetComponentInParent<ProceduralShapeMask>();
-                if (mask != m_CachedMask)
-                {
-                    m_CachedMask = mask;
-                    RefreshDependencies();
-                    SetAllDirty();
-                }
+                m_LastPos = t.position;
+                m_LastRot = t.rotation;
+                m_LastScale = t.lossyScale;
+                dirty = true;
+            }
+
+            foreach (var op in BooleanOperations)
+            {
+                if (op.SourceShape != null && CheckDependencyDirty(op.SourceShape)) 
+                    dirty = true;
+            }
+
+            if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled && m_CachedMask.Shape != null)
+            {
+                if (CheckDependencyDirty(m_CachedMask.Shape)) dirty = true;
+            }
+
+            if (dirty)
+            {
+                SetAllDirty();
             }
         }
 
@@ -332,6 +422,8 @@ namespace ProceduralShapes.Runtime
             m_SubscribedSources.Clear();
 
             if (!isActiveAndEnabled) return;
+
+            m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
 
             HashSet<ProceduralShape> uniqueSources = new HashSet<ProceduralShape>();
             foreach (var op in BooleanOperations)
@@ -357,7 +449,27 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
+        private struct TransformData 
+        {
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 lossyScale;
+            
+            public TransformData(Transform t)
+            {
+                position = t.position;
+                rotation = t.rotation;
+                lossyScale = t.lossyScale;
+            }
+            
+            public bool Equals(TransformData other)
+            {
+                return position == other.position && rotation == other.rotation && lossyScale == other.lossyScale;
+            }
+        }
+
         private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
+        private Dictionary<int, TransformData> m_KnownDependencyTransforms = new Dictionary<int, TransformData>();
 
         /// <summary> Проверяет, изменилась ли зависимая фигура. </summary>
         private bool CheckDependencyDirty(ProceduralShape other)
@@ -368,6 +480,13 @@ namespace ProceduralShapes.Runtime
             if (other.transform.hasChanged)
             {
                 return true; 
+            }
+
+            TransformData currentData = new TransformData(other.transform);
+            if (!m_KnownDependencyTransforms.TryGetValue(id, out TransformData lastData) || !lastData.Equals(currentData))
+            {
+                m_KnownDependencyTransforms[id] = currentData;
+                return true;
             }
 
             if (!m_KnownDependencyVersions.TryGetValue(id, out uint lastVer) || lastVer != currentVer)
