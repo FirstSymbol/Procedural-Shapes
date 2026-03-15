@@ -3,6 +3,10 @@ using UnityEngine;
 
 namespace ProceduralShapes.Runtime
 {
+    /// <summary>
+    /// Менеджер атласа градиентов. 
+    /// Запекает все используемые градиенты в одну текстуру, что позволяет рисовать множество разных фигур одним вызовом отрисовки (Batching).
+    /// </summary>
     public static class GradientAtlasManager
     {
         private static Texture2D s_AtlasTexture;
@@ -17,8 +21,13 @@ namespace ProceduralShapes.Runtime
             public int rowIndex;
         }
 
+        /// <summary> Текстура-атлас, содержащая запеченные данные градиентов. </summary>
         public static Texture2D AtlasTexture => s_AtlasTexture;
 
+        /// <summary>
+        /// Возвращает индекс строки в атласе для заданного градиента.
+        /// Если градиент новый, он будет запечен в свободную строку.
+        /// </summary>
         public static int GetAtlasRow(ShapeFill fill)
         {
             if (s_AtlasTexture == null)
@@ -31,7 +40,8 @@ namespace ProceduralShapes.Runtime
                 };
                 Color[] clear = new Color[ATLAS_WIDTH * ATLAS_HEIGHT];
                 for(int i=0; i<clear.Length; i++) clear[i] = Color.clear;
-                // Row 0 is always white for Solid fill batching
+                
+                // Нулевая строка зарезервирована для сплошного белого цвета (Solid fill)
                 for(int x=0; x<ATLAS_WIDTH; x++) clear[x] = clear[ATLAS_WIDTH + x] = clear[ATLAS_WIDTH*2 + x] = Color.white;
                 
                 s_AtlasTexture.SetPixels(clear);
@@ -48,10 +58,11 @@ namespace ProceduralShapes.Runtime
                     return data.rowIndex;
             }
 
-            int newIndex = (s_AtlasRegistry.Count + 1); // Row 0 is reserved
+            // Добавление нового градиента в атлас
+            int newIndex = (s_AtlasRegistry.Count + 1); 
             if (newIndex * 3 + 3 >= ATLAS_HEIGHT) 
             {
-                ClearAtlas(); // Atlas full, emergency reset
+                ClearAtlas(); // Атлас переполнен, экстренная очистка
                 return GetAtlasRow(fill); 
             }
 
@@ -61,6 +72,8 @@ namespace ProceduralShapes.Runtime
         }
 
         private static System.Text.StringBuilder s_HashBuilder = new System.Text.StringBuilder();
+        
+        /// <summary> Генерирует уникальный хеш для объекта Gradient на основе его ключей цвета и прозрачности. </summary>
         private static string GetGradientHash(Gradient g)
         {
             if (g == null) return "null";
@@ -75,9 +88,10 @@ namespace ProceduralShapes.Runtime
             return s_HashBuilder.ToString();
         }
 
+        /// <summary> Запекает значения градиента в пиксели текстуры атласа. </summary>
         private static void BakeToAtlas(int index, ShapeFill fill)
         {
-            int rowStart = index * 3;
+            int rowStart = index * 3; // Каждому градиенту выделяется 3 строки для фильтрации
             Color[] pixels = new Color[ATLAS_WIDTH * 3];
             for (int x = 0; x < ATLAS_WIDTH; x++)
             {
@@ -88,6 +102,7 @@ namespace ProceduralShapes.Runtime
             s_AtlasTexture.Apply();
         }
 
+        /// <summary> Полная очистка ресурсов атласа. </summary>
         public static void ClearAtlas()
         {
             if (s_AtlasTexture != null) Object.DestroyImmediate(s_AtlasTexture);

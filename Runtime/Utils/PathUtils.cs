@@ -3,8 +3,17 @@ using UnityEngine;
 
 namespace ProceduralShapes.Runtime
 {
+    /// <summary>
+    /// Утилитарный класс для работы с путями фигур.
+    /// </summary>
     public static class PathUtils
     {
+        /// <summary>
+        /// Преобразует сложный путь (с кривыми Безье) в список линейных точек.
+        /// </summary>
+        /// <param name="path">Исходный путь фигуры.</param>
+        /// <param name="output">Список для записи результирующих точек.</param>
+        /// <param name="resolution">Количество сегментов для аппроксимации каждой кривой Безье.</param>
         public static void FlattenPath(ShapePath path, List<Vector2> output, int resolution = 10)
         {
             output.Clear();
@@ -49,6 +58,15 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary>
+        /// Вычисляет положение точки на кубической кривой Безье.
+        /// </summary>
+        /// <param name="p0">Начальная точка.</param>
+        /// <param name="p1">Первая контрольная точка.</param>
+        /// <param name="p2">Вторая контрольная точка.</param>
+        /// <param name="p3">Конечная точка.</param>
+        /// <param name="t">Параметр интерполяции (от 0 до 1).</param>
+        /// <returns>Точка на кривой.</returns>
         private static Vector2 EvaluateCubicBezier(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
         {
             float u = 1 - t;

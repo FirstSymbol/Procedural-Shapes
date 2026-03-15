@@ -2,8 +2,20 @@ using UnityEngine;
 
 namespace ProceduralShapes.Runtime
 {
+    /// <summary>
+    /// Математическая библиотека для расчета функций SDF (Signed Distance Fields) на стороне CPU.
+    /// Используется для точного определения границ фигур при рейкастах.
+    /// </summary>
     public static class SDFMathUtils
     {
+        /// <summary>
+        /// Основная функция получения расстояния до границы фигуры.
+        /// </summary>
+        /// <param name="p">Точка относительно центра фигуры.</param>
+        /// <param name="halfSize">Половина размеров контейнера (ширина/высота).</param>
+        /// <param name="type">Тип геометрической фигуры.</param>
+        /// <param name="smoothing">Параметр сглаживания (если применимо).</param>
+        /// <param name="params4">Специфичные параметры фигуры (радиусы, количество сторон и т.д.).</param>
         public static float GetSDF_CPU(Vector2 p, Vector2 halfSize, ShapeType type, float smoothing, Vector4 params4)
         {
             float minHalfSize = Mathf.Min(halfSize.x, halfSize.y);
@@ -11,6 +23,7 @@ namespace ProceduralShapes.Runtime
             {
                 case ShapeType.Rectangle:
                 {
+                    // params4: X=TL, Y=TR, Z=BR, W=BL (радиусы скругления углов)
                     float r = 0;
                     if (p.x < 0 && p.y > 0) r = params4.x;
                     else if (p.x >= 0 && p.y > 0) r = params4.y;
@@ -26,6 +39,7 @@ namespace ProceduralShapes.Runtime
 
                 case ShapeType.Polygon:
                 {
+                    // params4: X=Sides (кол-во сторон), Y=Rounding (скругление)
                     float n = Mathf.Max(3.0f, params4.x);
                     float an = Mathf.PI / n;
                     float a = Mathf.Atan2(p.x, p.y);
@@ -40,6 +54,7 @@ namespace ProceduralShapes.Runtime
 
                 case ShapeType.Star:
                 {
+                    // params4: X=Points, Y=Ratio (внутр. радиус), Z=RoundingOuter, W=RoundingInner
                     float n = Mathf.Max(3.0f, params4.x);
                     float maxR = minHalfSize;
                     
@@ -85,6 +100,7 @@ namespace ProceduralShapes.Runtime
                 }
 
                 case ShapeType.Capsule:
+                    // params4: X=Rounding (скругление)
                     float cr = params4.x * minHalfSize;
                     Vector2 ch = Vector2.Max(halfSize - new Vector2(cr, cr), Vector2.zero);
                     Vector2 cq = new Vector2(Mathf.Abs(p.x), Mathf.Abs(p.y)) - ch;
@@ -92,6 +108,7 @@ namespace ProceduralShapes.Runtime
 
                 case ShapeType.Line:
                 {
+                    // params4: XY=Start Point, ZW=End Point
                     Vector2 pa = p - new Vector2(params4.x, params4.y);
                     Vector2 ba = new Vector2(params4.z, params4.w) - new Vector2(params4.x, params4.y);
                     float h = Mathf.Clamp01(Vector2.Dot(pa, ba) / Vector2.Dot(ba, ba));
@@ -100,6 +117,7 @@ namespace ProceduralShapes.Runtime
 
                 case ShapeType.Ring:
                 {
+                    // params4: X=InnerRadius, Y=StartAngle, Z=EndAngle
                     float innerR = params4.x * minHalfSize;
                     float thickness = (minHalfSize - innerR) * 0.5f;
                     float midR = (minHalfSize + innerR) * 0.5f;
@@ -152,6 +170,7 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary> Дробная часть числа. </summary>
         public static float frac(float x) => x - Mathf.Floor(x);
     }
 }

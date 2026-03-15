@@ -4,12 +4,16 @@ using UnityEngine.UI;
 
 namespace ProceduralShapes.Runtime
 {
+    /// <summary>
+    /// Основной компонент для отрисовки процедурных фигур в Unity UI.
+    /// Использует математику SDF (Signed Distance Fields) для рендеринга вектроной графики.
+    /// </summary>
     [ExecuteAlways]
     [RequireComponent(typeof(CanvasRenderer))]
     [AddComponentMenu("UI/Procedural Shapes/Shape")]
     public partial class ProceduralShape : MaskableGraphic, ICanvasRaycastFilter, ISerializationCallbackReceiver
     {
-        [Tooltip("Если включено, фигура не будет отрисовываться, но может использоваться как Cutter для других фигур.")]
+        [Tooltip("Если включено, фигура не будет отрисовываться, но может использоваться как Cutter (резак) для других фигур.")]
         [SerializeField] private bool m_DisableRendering = false;
 
         private void OnDrawGizmos()
@@ -24,10 +28,11 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        [Header("Shape Definition")]
+        [Header("Определение формы (Shape Definition)")]
+        /// <summary> Тип основной геометрической фигуры. </summary>
         public ShapeType m_ShapeType = ShapeType.Rectangle;
         
-        [Tooltip("Uniform scale factor for the shape inside the RectTransform bounds.")]
+        [Tooltip("Масштаб фигуры внутри границ RectTransform.")]
         [SerializeField, HideInInspector] private float m_ShapeScale = 1.0f;
 
         [SerializeField] private Vector2 m_ShapeScale2D = new Vector2(1f, 1f);
@@ -38,6 +43,7 @@ namespace ProceduralShapes.Runtime
 
         public void OnAfterDeserialize()
         {
+            // Миграция старого одномерного масштаба в новый Vector2
             if (!m_ScaleMigrated)
             {
                 m_ShapeScale2D = new Vector2(m_ShapeScale, m_ShapeScale);
@@ -45,35 +51,52 @@ namespace ProceduralShapes.Runtime
             }
         }
 
-        [Tooltip("Pivot of the shape geometry relative to the RectTransform center. (0.5, 0.5) is centered.")]
+        [Tooltip("Точка привязки геометрии относительно центра RectTransform. (0.5, 0.5) — строго по центру.")]
         [SerializeField] private Vector2 m_ShapePivot = new Vector2(0.5f, 0.5f);
 
+        /// <summary> Радиусы скругления углов (X=TL, Y=TR, Z=BR, W=BL). Только для Rectangle. </summary>
         public Vector4 m_CornerRadius = Vector4.zero;
+        /// <summary> Плавность скругления углов. </summary>
         [Range(0f, 1f)] public float m_CornerSmoothing = 0f;
         
+        /// <summary> Количество сторон многоугольника. </summary>
         [Range(3, 128)] public int m_PolygonSides = 5;
+        /// <summary> Скругление углов многоугольника. </summary>
         [Range(0f, 1f)] public float m_PolygonRounding = 0f;
 
+        /// <summary> Количество лучей звезды. </summary>
         [Range(3, 128)] public int m_StarPoints = 5;
+        /// <summary> Соотношение внутреннего и внешнего радиуса звезды. </summary>
         [Range(0.01f, 1f)] public float m_StarRatio = 0.5f;
+        /// <summary> Скругление внешних углов звезды. </summary>
         [Range(0f, 1f)] public float m_StarRoundingOuter = 0f;
+        /// <summary> Скругление внутренних углов звезды. </summary>
         [Range(0f, 1f)] public float m_StarRoundingInner = 0f;
 
+        /// <summary> Скругление концов капсулы. </summary>
         [Range(0f, 1f)] public float m_CapsuleRounding = 1f;
 
+        /// <summary> Начальная точка линии в локальных координатах. </summary>
         public Vector2 m_LineStart = new Vector2(-50, 0);
+        /// <summary> Конечная точка линии в локальных координатах. </summary>
         public Vector2 m_LineEnd = new Vector2(50, 0);
+        /// <summary> Толщина линии. </summary>
         [Range(0.1f, 100f)] public float m_LineWidth = 5f;
 
+        /// <summary> Внутренний радиус кольца (0-1). </summary>
         [Range(0f, 1f)] public float m_RingInnerRadius = 0.5f;
+        /// <summary> Начальный угол сегмента кольца. </summary>
         [Range(0f, 360f)] public float m_RingStartAngle = 0f;
+        /// <summary> Конечный угол сегмента кольца. </summary>
         [Range(0f, 360f)] public float m_RingEndAngle = 360f;
         
-        [Header("Path Settings")]
+        [Header("Настройки пути (Path Settings)")]
+        /// <summary> Данные векторного пути. </summary>
         public ShapePath m_ShapePath = new ShapePath();
+        /// <summary> Оптимизированный список точек после аппроксимации кривых Безье. </summary>
         [HideInInspector] public List<Vector2> m_FlattenedPath = new List<Vector2>();
 
-        [Range(0f, 100f)]
+        [Range(-100f, 100f)]
         [Tooltip("Внутренний отступ (Inset). Положительные значения сужают фигуру, отрицательные — расширяют.")]
         public float m_InternalPadding = 0f;
 
@@ -81,16 +104,21 @@ namespace ProceduralShapes.Runtime
         [Tooltip("Сглаживание краев (антиалиасинг). Значение около 1.0 обычно оптимально.")]
         public float m_EdgeSoftness = 1.0f;
 
-        [Header("Edge Noise")]
+        [Header("Шум на краях (Edge Noise)")]
+        /// <summary> Интенсивность шума на границах фигуры. </summary>
         [Range(0f, 50f)] public float m_EdgeNoiseAmount = 0f;
+        /// <summary> Масштаб (частота) шума. </summary>
         [Range(0.01f, 1f)] public float m_EdgeNoiseScale = 0.1f;
 
-        [Header("Boolean Operations")]
+        [Header("Булевы операции (Boolean Operations)")]
+        /// <summary> Список фигур, которые взаимодействуют с текущей (вычитание, объединение и т.д.). </summary>
         public List<BooleanInput> BooleanOperations = new List<BooleanInput>();
 
-        [Header("Appearance")]
+        [Header("Внешний вид (Appearance)")]
+        /// <summary> Настройки заливки основной фигуры. </summary>
         public ShapeFill MainFill = new ShapeFill();
 
+        /// <summary> Список дополнительных эффектов (тени, свечение, обводка). </summary>
         [SerializeReference] 
         public List<ProceduralEffect> Effects = new List<ProceduralEffect>();
 
@@ -100,17 +128,25 @@ namespace ProceduralShapes.Runtime
         private Material m_InstanceMaterial; 
         private ProceduralShapeMask m_CachedMask;
         
-        private static Material s_SharedMaterial;
-        private static Material sharedMaterial 
+        private static Material s_DefaultMaterial;
+        private static Shader s_ShapeShader;
+
+        /// <summary> Возвращает шейдер, используемый для отрисовки фигур. </summary>
+        private static Shader GetShapeShader()
         {
-            get 
+            if (s_ShapeShader == null)
             {
-                if (s_SharedMaterial == null) s_SharedMaterial = new Material(Shader.Find("UI/ProceduralShapes/Shape"));
-                return s_SharedMaterial;
+                s_ShapeShader = Shader.Find("UI/ProceduralShapes/Shape");
+                if (s_ShapeShader == null)
+                {
+                    Debug.LogError("[ProceduralShape] Шейдер 'UI/ProceduralShapes/Shape' не найден! Убедитесь, что плагин установлен корректно.");
+                }
             }
+            return s_ShapeShader;
         }
 
         private RectTransform m_RectTransform;
+        /// <summary> Кешированная ссылка на RectTransform. </summary>
         public new RectTransform rectTransform => m_RectTransform ? m_RectTransform : (m_RectTransform = GetComponent<RectTransform>());
 
         private bool m_NeedUpdate = true;
@@ -128,6 +164,7 @@ namespace ProceduralShapes.Runtime
 
         private static readonly Vector3[] s_Corners = new Vector3[4];
 
+        /// <summary> Основная текстура графического элемента (атлас градиентов). </summary>
         public override Texture mainTexture 
         {
             get 
@@ -137,60 +174,72 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary> Отключить отрисовку, сохранив функционал резака. </summary>
         public bool DisableRendering
         {
             get => m_DisableRendering;
             set { if (m_DisableRendering != value) { m_DisableRendering = value; SetAllDirty(); } }
         }
 
+        /// <summary> Масштаб фигуры. </summary>
         public Vector2 ShapeScale
         {
             get => m_ShapeScale2D;
             set { if (m_ShapeScale2D != value) { m_ShapeScale2D = value; SetAllDirty(); } }
         }
 
+        /// <summary> Связать масштаб по X и Y. </summary>
         public bool LinkScale
         {
             get => m_LinkScale;
             set { if (m_LinkScale != value) { m_LinkScale = value; SetAllDirty(); } }
         }
 
+        /// <summary> Пивот геометрии. </summary>
         public Vector2 ShapePivot
         {
             get => m_ShapePivot;
             set { if (m_ShapePivot != value) { m_ShapePivot = value; SetAllDirty(); } }
         }
 
+        /// <summary> Внутренний отступ. </summary>
         public float InternalPadding
         {
             get => m_InternalPadding;
             set { if (Mathf.Abs(m_InternalPadding - value) > 0.0001f) { m_InternalPadding = value; SetAllDirty(); } }
         }
 
+        /// <summary> Рассчитывает смещение центра геометрии на основе пивота. </summary>
         public Vector2 GetGeometricCenterOffset()
         {
             Rect r = rectTransform.rect;
             return new Vector2((m_ShapePivot.x - 0.5f) * r.width, (m_ShapePivot.y - 0.5f) * r.height);
         }
 
-        private static Material m_DefaultMaterial;
         public override Material defaultMaterial
         {
             get
             {
-                if (m_DefaultMaterial == null) m_DefaultMaterial = new Material(Shader.Find("UI/ProceduralShapes/Shape"));
-                return m_DefaultMaterial ?? base.defaultMaterial;
+                if (s_DefaultMaterial == null)
+                {
+                    Shader shader = GetShapeShader();
+                    if (shader != null) s_DefaultMaterial = new Material(shader);
+                }
+                return s_DefaultMaterial ?? base.defaultMaterial;
             }
         }
 
+        /// <summary> Событие, вызываемое при любом изменении параметров фигуры. </summary>
         public event System.Action OnShapeChanged;
         [System.NonSerialized] private bool m_IsNotifying = false;
         [System.NonSerialized] private List<ProceduralShape> m_SubscribedSources = new List<ProceduralShape>();
 
         public new bool IsActive => gameObject.activeInHierarchy && enabled;
         [System.NonSerialized] private uint m_Version = 0;
+        /// <summary> Версия изменений объекта. Используется зависимыми объектами для отслеживания изменений. </summary>
         public uint Version => m_Version;
 
+        /// <summary> Помечает объект как требующий полной перерисовки и обновления зависимостей. </summary>
         public override void SetAllDirty() 
         { 
             if (m_IsNotifying) return;
@@ -258,6 +307,7 @@ namespace ProceduralShapes.Runtime
                 SetAllDirty();
             }
 
+            // Автоматический поиск маски в родительской иерархии
             if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
             {
                 var mask = GetComponentInParent<ProceduralShapeMask>();
@@ -270,6 +320,9 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        /// <summary>
+        /// Обновляет подписки на изменения других фигур, участвующих в булевых операциях или маскировании.
+        /// </summary>
         private void RefreshDependencies()
         {
             foreach (var s in m_SubscribedSources)
@@ -306,16 +359,14 @@ namespace ProceduralShapes.Runtime
 
         private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
 
+        /// <summary> Проверяет, изменилась ли зависимая фигура. </summary>
         private bool CheckDependencyDirty(ProceduralShape other)
         {
             int id = other.GetInstanceID();
             uint currentVer = other.Version;
             
-            // Also check if the other shape's transform has changed (it might not have its own LateUpdate running yet or ever)
             if (other.transform.hasChanged)
             {
-                // We don't clear other.transform.hasChanged here to avoid breaking its own update
-                // But we know it's dirty.
                 return true; 
             }
 
@@ -333,6 +384,7 @@ namespace ProceduralShapes.Runtime
             if (m_InstanceMaterial != null) ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
         }
 
+        /// <summary> Обновляет данные в атласе градиентов для основной заливки и эффектов. </summary>
         private void RebuildGradientTexture()
         {
             if (!m_TextureDirty) return;

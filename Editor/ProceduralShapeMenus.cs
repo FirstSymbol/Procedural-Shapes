@@ -7,10 +7,17 @@ using ProceduralShapes.Runtime;
 
 namespace ProceduralShapes.Editor
 {
+    /// <summary>
+    /// Предоставляет пункты меню в редакторе Unity для создания процедурных фигур.
+    /// </summary>
     public static class ProceduralShapeMenus
     {
         private const string MENU_PATH = "GameObject/UI/Procedural Shapes/";
 
+        /// <summary>
+        /// Создает новый объект процедурной фигуры в UI.
+        /// </summary>
+        /// <param name="menuCommand">Контекст команды меню.</param>
         [MenuItem(MENU_PATH + "Shape", false, 10)]
         public static void CreateProceduralShape(MenuCommand menuCommand)
         {
@@ -23,6 +30,10 @@ namespace ProceduralShapes.Editor
             FinalizeCreation(go);
         }
 
+        /// <summary>
+        /// Создает новый объект процедурной маски в UI.
+        /// </summary>
+        /// <param name="menuCommand">Контекст команды меню.</param>
         [MenuItem(MENU_PATH + "Shape Mask", false, 11)]
         public static void CreateProceduralShapeMask(MenuCommand menuCommand)
         {
@@ -36,6 +47,12 @@ namespace ProceduralShapes.Editor
             FinalizeCreation(go);
         }
 
+        /// <summary>
+        /// Создает базовый UI объект с RectTransform и CanvasRenderer.
+        /// </summary>
+        /// <param name="name">Имя создаваемого объекта.</param>
+        /// <param name="parent">Родительский объект.</param>
+        /// <returns>Созданный GameObject.</returns>
         private static GameObject CreateUIObject(string name, GameObject parent)
         {
             GameObject go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer));
@@ -51,12 +68,20 @@ namespace ProceduralShapes.Editor
             return go;
         }
 
+        /// <summary>
+        /// Завершает создание объекта: регистрирует Undo и выбирает его в иерархии.
+        /// </summary>
+        /// <param name="go">Созданный объект.</param>
         private static void FinalizeCreation(GameObject go)
         {
             Undo.RegisterCreatedObjectUndo(go, "Create " + go.name);
             Selection.activeObject = go;
         }
 
+        /// <summary>
+        /// Находит существующий Canvas или создает новый, если он отсутствует.
+        /// </summary>
+        /// <returns>GameObject холста.</returns>
         private static GameObject GetOrCreateCanvasGameObject()
         {
             Canvas canvas = Object.FindObjectOfType<Canvas>();
