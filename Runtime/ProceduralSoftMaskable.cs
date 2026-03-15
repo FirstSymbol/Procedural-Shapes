@@ -43,18 +43,38 @@ namespace ProceduralShapes.Runtime
         private void OnEnable()
         {
             m_Graphic = GetComponent<Graphic>();
+            RefreshMaskSubscription();
             m_Graphic.SetMaterialDirty();
             m_Graphic.SetVerticesDirty();
         }
 
         private void OnDisable()
         {
+            if (m_CachedMask != null && m_CachedMask.Shape != null)
+                m_CachedMask.Shape.OnShapeChanged -= HandleMaskChanged;
+
             if (m_MaskMaterial != null) DestroyImmediate(m_MaskMaterial);
             if (m_Graphic != null)
             {
                 m_Graphic.SetMaterialDirty();
                 m_Graphic.SetVerticesDirty();
             }
+        }
+
+        private void RefreshMaskSubscription()
+        {
+            if (m_CachedMask != null && m_CachedMask.Shape != null)
+                m_CachedMask.Shape.OnShapeChanged -= HandleMaskChanged;
+
+            m_CachedMask = GetComponentInParent<ProceduralShapeMask>();
+
+            if (m_CachedMask != null && m_CachedMask.Shape != null)
+                m_CachedMask.Shape.OnShapeChanged += HandleMaskChanged;
+        }
+
+        private void HandleMaskChanged()
+        {
+            if (m_Graphic != null) m_Graphic.SetMaterialDirty();
         }
 
         private uint m_LastMaskVersion = 0;
@@ -65,7 +85,11 @@ namespace ProceduralShapes.Runtime
         private void Update()
         {
             if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null)
+            {
+                var currentMask = GetComponentInParent<ProceduralShapeMask>();
+                if (currentMask != m_CachedMask) RefreshMaskSubscription();
                 return;
+            }
 
             bool dirty = false;
             if (m_CachedMask.Shape.Version != m_LastMaskVersion)

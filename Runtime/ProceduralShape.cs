@@ -183,22 +183,33 @@ namespace ProceduralShapes.Runtime
             }
         }
 
+        public event System.Action OnShapeChanged;
+        [System.NonSerialized] private bool m_IsNotifying = false;
+        [System.NonSerialized] private List<ProceduralShape> m_SubscribedSources = new List<ProceduralShape>();
+
         public new bool IsActive => gameObject.activeInHierarchy && enabled;
         [System.NonSerialized] private uint m_Version = 0;
         public uint Version => m_Version;
 
         public override void SetAllDirty() 
         { 
+            if (m_IsNotifying) return;
+            m_IsNotifying = true;
+
             m_TextureDirty = true; 
             m_NeedUpdate = true; 
             m_Version++;
             base.SetVerticesDirty(); 
             base.SetMaterialDirty(); 
+
+            OnShapeChanged?.Invoke();
+            m_IsNotifying = false;
         }
 
         protected override void OnValidate()
         {
             base.OnValidate();
+            RefreshDependencies();
             SetAllDirty();
         }
 
@@ -206,21 +217,32 @@ namespace ProceduralShapes.Runtime
         { 
             base.OnEnable(); 
             m_RectTransform = GetComponent<RectTransform>();
+            RefreshDependencies();
             SetAllDirty(); 
+        }
+
+        protected override void OnDisable()
+        {
+            base.OnDisable();
+            foreach (var s in m_SubscribedSources)
+            {
+                if (s != null) s.OnShapeChanged -= HandleDependencyChanged;
+            }
+            m_SubscribedSources.Clear();
         }
         
         protected override void OnTransformParentChanged() 
         { 
             base.OnTransformParentChanged(); 
             m_CachedMask = null; 
+            RefreshDependencies();
             SetAllDirty(); 
         }
         
         protected override void OnRectTransformDimensionsChange()
         {
             base.OnRectTransformDimensionsChange();
-            m_NeedUpdate = true;
-            m_Version++;
+            SetAllDirty();
         }
 
         private void LateUpdate()
@@ -230,13 +252,10 @@ namespace ProceduralShapes.Runtime
 
         private void CheckForChanges()
         {
-            bool dirty = m_NeedUpdate;
-
             if (transform.hasChanged)
             {
-                m_Version++;
-                dirty = true;
                 transform.hasChanged = false;
+                SetAllDirty();
             }
 
             if (m_CachedMask == null || !m_CachedMask.gameObject.activeInHierarchy)
@@ -245,44 +264,44 @@ namespace ProceduralShapes.Runtime
                 if (mask != m_CachedMask)
                 {
                     m_CachedMask = mask;
-                    dirty = true;
+                    RefreshDependencies();
+                    SetAllDirty();
                 }
             }
+        }
 
-            if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled)
+        private void RefreshDependencies()
+        {
+            foreach (var s in m_SubscribedSources)
             {
-                if (m_CachedMask.Shape != null)
-                {
-                    if (CheckDependencyDirty(m_CachedMask.Shape)) dirty = true;
-                    
-                    var maskOps = m_CachedMask.Shape.BooleanOperations;
-                    for (int i = 0; i < maskOps.Count; i++)
-                    {
-                        if (maskOps[i].SourceShape != null && CheckDependencyDirty(maskOps[i].SourceShape))
-                            dirty = true;
-                    }
-                }
+                if (s != null) s.OnShapeChanged -= HandleDependencyChanged;
+            }
+            m_SubscribedSources.Clear();
+
+            if (!isActiveAndEnabled) return;
+
+            HashSet<ProceduralShape> uniqueSources = new HashSet<ProceduralShape>();
+            foreach (var op in BooleanOperations)
+            {
+                if (op.SourceShape != null && op.SourceShape != this) 
+                    uniqueSources.Add(op.SourceShape);
             }
 
-            if (BooleanOperations.Count > 0)
+            if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled && m_CachedMask.Shape != null && m_CachedMask.Shape != this)
             {
-                for (int i = 0; i < BooleanOperations.Count; i++)
-                {
-                    var other = BooleanOperations[i].SourceShape;
-                    if (other != null && other.isActiveAndEnabled)
-                    {
-                        if (CheckDependencyDirty(other)) 
-                            dirty = true;
-                    }
-                }
+                uniqueSources.Add(m_CachedMask.Shape);
             }
 
-            if (dirty)
+            foreach (var s in uniqueSources)
             {
-                m_NeedUpdate = false;
-                base.SetMaterialDirty();
-                base.SetVerticesDirty(); 
+                s.OnShapeChanged += HandleDependencyChanged;
+                m_SubscribedSources.Add(s);
             }
+        }
+
+        private void HandleDependencyChanged()
+        {
+            SetAllDirty();
         }
 
         private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
