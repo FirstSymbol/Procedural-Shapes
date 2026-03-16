@@ -314,7 +314,7 @@ namespace ProceduralShapes.Runtime
         {
             if (canvas != null)
             {
-                var channels = AdditionalCanvasShaderChannels.TexCoord1 | AdditionalCanvasShaderChannels.TexCoord2 | AdditionalCanvasShaderChannels.TexCoord3;
+                var channels = AdditionalCanvasShaderChannels.TexCoord1 | AdditionalCanvasShaderChannels.TexCoord2 | AdditionalCanvasShaderChannels.TexCoord3 | AdditionalCanvasShaderChannels.Normal | AdditionalCanvasShaderChannels.Tangent;
                 if ((canvas.additionalShaderChannels & channels) != channels)
                 {
                     canvas.additionalShaderChannels |= channels;
