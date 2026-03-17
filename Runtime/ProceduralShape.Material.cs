@@ -104,6 +104,7 @@ namespace ProceduralShapes.Runtime
             // --- 3. Использование ShaderState и пула материалов ---
             ShaderState state = ProceduralMaterialPool.TempState;
             state.Clear();
+            state.ShapeType = m_ShapeType;
             state.BaseMatId = baseMaterial.GetInstanceID();
             state.MainTex = mainTexture;
             state.PatternTex = MainFill.Type == FillType.Pattern ? MainFill.PatternTexture : null;
@@ -149,15 +150,35 @@ namespace ProceduralShapes.Runtime
                 }
             }
 
-            Material matToUse = ProceduralMaterialPool.GetMaterial(state, baseMaterial);
-            
-            if (m_InstanceMaterial != null) 
+            bool isUnique = hasMask || m_ActiveBoolCount > 0 || firstPathOperator != null;
+
+            if (isUnique)
             {
-                ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
+                if (m_InstanceMaterial == null || m_InstanceMaterialIsPooled)
+                {
+                    if (m_InstanceMaterial != null) ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
+                    m_InstanceMaterial = new Material(baseMaterial);
+                    m_InstanceMaterial.hideFlags = HideFlags.HideAndDontSave;
+                    m_InstanceMaterialIsPooled = false;
+                }
+                
+                state.ApplyToMaterial(m_InstanceMaterial);
+                return m_InstanceMaterial;
             }
-            
-            m_InstanceMaterial = matToUse;
-            return m_InstanceMaterial;
+            else
+            {
+                Material matToUse = ProceduralMaterialPool.GetMaterial(state, baseMaterial);
+                
+                if (m_InstanceMaterial != null) 
+                {
+                    if (m_InstanceMaterialIsPooled) ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
+                    else if (Application.isPlaying) Destroy(m_InstanceMaterial); else DestroyImmediate(m_InstanceMaterial);
+                }
+                
+                m_InstanceMaterial = matToUse;
+                m_InstanceMaterialIsPooled = true;
+                return m_InstanceMaterial;
+            }
         }
 
         /// <summary> Упаковывает и передает данные точек пути в массивы состояния. </summary>
@@ -217,9 +238,10 @@ namespace ProceduralShapes.Runtime
             float customParam = shape.m_CornerSmoothing;
             if (shape.m_ShapeType == ShapeType.Line) customParam = shape.m_LineWidth;
 
+            float rotRad = relativeRotation * Mathf.Deg2Rad;
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, customParam, smoothness); 
             m_ShaderShapeParams[index] = shape.GetPackedShapeParams();
-            m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, relativeRotation * Mathf.Deg2Rad, 0);
+            m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, Mathf.Sin(-rotRad), Mathf.Cos(-rotRad));
             
             Vector2 otherScale = shape.ShapeScale; 
             Vector3 lossyScaleRatio = new Vector3(
@@ -279,9 +301,10 @@ namespace ProceduralShapes.Runtime
             float customParam = shape.m_CornerSmoothing;
             if (shape.m_ShapeType == ShapeType.Line) customParam = shape.m_LineWidth;
 
+            float rotRad = relativeRotation * Mathf.Deg2Rad;
             m_MaskShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, customParam, smoothness); 
             m_MaskShaderShapeParams[index] = shape.GetPackedShapeParams();
-            m_MaskShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
+            m_MaskShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, Mathf.Sin(-rotRad), Mathf.Cos(-rotRad));
             
             Vector3 lossyScaleRatio = new Vector3(
                 m_CachedMask.Shape.transform.lossyScale.x != 0 ? otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x : 0, 

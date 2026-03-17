@@ -137,11 +137,8 @@ Shader "UI/ProceduralShapes/SoftMaskedImage"
                             float4 boolShapeParams = _MaskBoolShapeParams[k];
 
                             float2 p2 = maskP - boolTrans.xy;
-                            float rot = boolTrans.z;
-                            if (abs(rot) > 0.0001) {
-                                float s = sin(-rot);
-                                float c = cos(-rot);
-                                p2 = float2(p2.x * c - p2.y * s, p2.x * s + p2.y * c);
+                            if (abs(boolTrans.z) > 0.0001 || abs(boolTrans.w - 1.0) > 0.0001) {
+                                p2 = float2(p2.x * boolTrans.w - p2.y * boolTrans.z, p2.x * boolTrans.z + p2.y * boolTrans.w);
                             }
 
                             float d2 = GetBasicSDF(p2, boolSize * 0.5, boolType, boolSmooth, boolShapeParams);

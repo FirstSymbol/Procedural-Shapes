@@ -126,6 +126,7 @@ namespace ProceduralShapes.Runtime
         [System.NonSerialized] private List<int> m_EffectAtlasIndices = new List<int>();
         [System.NonSerialized] private bool m_TextureDirty = true;
         private Material m_InstanceMaterial; 
+        private bool m_InstanceMaterialIsPooled = true; 
         private ProceduralShapeMask m_CachedMask;
         
         private static Material s_DefaultMaterial;
@@ -148,8 +149,6 @@ namespace ProceduralShapes.Runtime
         private RectTransform m_RectTransform;
         /// <summary> Кешированная ссылка на RectTransform. </summary>
         public new RectTransform rectTransform => m_RectTransform ? m_RectTransform : (m_RectTransform = GetComponent<RectTransform>());
-
-        private bool m_NeedUpdate = true;
 
         private const int MAX_OPS = 8;
         private Vector4[] m_ShaderOps = new Vector4[MAX_OPS];
@@ -252,7 +251,6 @@ namespace ProceduralShapes.Runtime
             m_IsNotifying = true;
 
             m_TextureDirty = true; 
-            m_NeedUpdate = true; 
             m_Version++;
             base.SetVerticesDirty(); 
             base.SetMaterialDirty(); 
@@ -365,49 +363,32 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
-        private Vector3 m_LastPos;
-        private Quaternion m_LastRot;
-        private Vector3 m_LastScale;
-
         private void LateUpdate()
         {
-            CheckForChanges();
-        }
-
-        private void CheckForChanges()
-        {
-            bool dirty = false;
+            if (this == null || !isActiveAndEnabled) return;
             
-            if (transform.hasChanged)
-            {
-                transform.hasChanged = false;
-                dirty = true;
-            }
-
-            Transform t = transform;
-            if (m_LastPos != t.position || m_LastRot != t.rotation || m_LastScale != t.lossyScale)
-            {
-                m_LastPos = t.position;
-                m_LastRot = t.rotation;
-                m_LastScale = t.lossyScale;
-                dirty = true;
-            }
+            bool dirty = false;
 
             foreach (var op in BooleanOperations)
             {
-                if (op.SourceShape != null && CheckDependencyDirty(op.SourceShape)) 
+                if (op.SourceShape != null && CheckRelativeTransformDirty(op.SourceShape)) 
                     dirty = true;
             }
 
             if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled && m_CachedMask.Shape != null)
             {
-                if (CheckDependencyDirty(m_CachedMask.Shape)) dirty = true;
+                if (CheckRelativeTransformDirty(m_CachedMask.Shape)) dirty = true;
             }
 
             if (dirty)
             {
                 SetAllDirty();
             }
+        }
+
+        private void CheckForChanges()
+        {
+            LateUpdate();
         }
 
         /// <summary>
@@ -449,52 +430,29 @@ namespace ProceduralShapes.Runtime
             SetAllDirty();
         }
 
-        private struct TransformData 
-        {
-            public Vector3 position;
-            public Quaternion rotation;
-            public Vector3 lossyScale;
-            
-            public TransformData(Transform t)
-            {
-                position = t.position;
-                rotation = t.rotation;
-                lossyScale = t.lossyScale;
-            }
-            
-            public bool Equals(TransformData other)
-            {
-                return position == other.position && rotation == other.rotation && lossyScale == other.lossyScale;
-            }
-        }
+        private Dictionary<int, Matrix4x4> m_KnownRelativeTransforms = new Dictionary<int, Matrix4x4>();
 
-        private Dictionary<int, uint> m_KnownDependencyVersions = new Dictionary<int, uint>();
-        private Dictionary<int, TransformData> m_KnownDependencyTransforms = new Dictionary<int, TransformData>();
-
-        /// <summary> Проверяет, изменилась ли зависимая фигура. </summary>
-        private bool CheckDependencyDirty(ProceduralShape other)
+        private bool CheckRelativeTransformDirty(ProceduralShape other)
         {
+            if (other == null || rectTransform == null || other.rectTransform == null) return false;
+
             int id = other.GetInstanceID();
-            uint currentVer = other.Version;
+            Matrix4x4 relativeMatrix = rectTransform.worldToLocalMatrix * other.rectTransform.localToWorldMatrix;
             
-            if (other.transform.hasChanged)
+            if (!m_KnownRelativeTransforms.TryGetValue(id, out Matrix4x4 lastMatrix) || !MatricesAreClose(lastMatrix, relativeMatrix))
             {
-                return true; 
-            }
-
-            TransformData currentData = new TransformData(other.transform);
-            if (!m_KnownDependencyTransforms.TryGetValue(id, out TransformData lastData) || !lastData.Equals(currentData))
-            {
-                m_KnownDependencyTransforms[id] = currentData;
-                return true;
-            }
-
-            if (!m_KnownDependencyVersions.TryGetValue(id, out uint lastVer) || lastVer != currentVer)
-            {
-                m_KnownDependencyVersions[id] = currentVer;
+                m_KnownRelativeTransforms[id] = relativeMatrix;
                 return true;
             }
             return false;
+        }
+
+        private bool MatricesAreClose(Matrix4x4 a, Matrix4x4 b)
+        {
+            for(int i = 0; i < 16; i++) {
+                if(Mathf.Abs(a[i] - b[i]) > 0.0001f) return false;
+            }
+            return true;
         }
 
         protected override void OnDestroy() 
