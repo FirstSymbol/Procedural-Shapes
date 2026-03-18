@@ -101,9 +101,7 @@ namespace ProceduralShapes.Runtime
         private void HandleMaskChanged() => HandleDependencyChanged();
 
         private uint m_LastMaskVersion = 0;
-        private Vector3 m_LastPos;
-        private Quaternion m_LastRot;
-        private Vector3 m_LastScale;
+        private Matrix4x4 m_LastRelativeMatrix = Matrix4x4.identity;
 
         private void OnTransformParentChanged()
         {
@@ -113,7 +111,7 @@ namespace ProceduralShapes.Runtime
 
         private void Update()
         {
-            if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null)
+            if (m_CachedMask == null || !m_CachedMask.isActiveAndEnabled || m_CachedMask.Shape == null || m_Graphic == null)
                 return;
 
             bool dirty = false;
@@ -125,13 +123,11 @@ namespace ProceduralShapes.Runtime
                 dirty = true;
             }
 
-            // Проверка изменения позиции/вращения для обновления матрицы
-            Transform t = transform;
-            if (t.position != m_LastPos || t.rotation != m_LastRot || t.lossyScale != m_LastScale)
+            // Проверка относительного изменения позиции
+            Matrix4x4 currentRelativeMatrix = m_CachedMask.Shape.rectTransform.worldToLocalMatrix * m_Graphic.rectTransform.localToWorldMatrix;
+            if (!MatricesAreClose(m_LastRelativeMatrix, currentRelativeMatrix))
             {
-                m_LastPos = t.position;
-                m_LastRot = t.rotation;
-                m_LastScale = t.lossyScale;
+                m_LastRelativeMatrix = currentRelativeMatrix;
                 dirty = true;
             }
 
@@ -139,6 +135,14 @@ namespace ProceduralShapes.Runtime
             {
                 m_Graphic.SetMaterialDirty();
             }
+        }
+
+        private bool MatricesAreClose(Matrix4x4 a, Matrix4x4 b)
+        {
+            for(int i = 0; i < 16; i++) {
+                if(Mathf.Abs(a[i] - b[i]) > 0.0001f) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -212,16 +216,17 @@ namespace ProceduralShapes.Runtime
             state.Clear();
 
             if (s_SoftMaskShader == null) s_SoftMaskShader = Shader.Find("UI/ProceduralShapes/SoftMaskedImage");
-            if (m_CustomBaseMat == null)
+            
+            if (m_MaskMaterial == null)
             {
-                m_CustomBaseMat = new Material(s_SoftMaskShader);
-                m_CustomBaseMat.hideFlags = HideFlags.HideAndDontSave;
+                m_MaskMaterial = new Material(s_SoftMaskShader);
+                m_MaskMaterial.hideFlags = HideFlags.HideAndDontSave;
             }
             
-            m_CustomBaseMat.CopyPropertiesFromMaterial(baseMaterial);
-            m_CustomBaseMat.shaderKeywords = baseMaterial.shaderKeywords;
+            m_MaskMaterial.CopyPropertiesFromMaterial(baseMaterial);
+            m_MaskMaterial.shaderKeywords = baseMaterial.shaderKeywords;
             
-            state.BaseMatId = m_CustomBaseMat.ComputeCRC(); 
+            state.BaseMatId = m_MaskMaterial.ComputeCRC(); 
             state.HasMask = true;
             state.MaskMatrix = localToMaskSDF;
             state.MaskParams = new Vector4(1f, (float)maskShape.m_ShapeType, maskShape.m_CornerSmoothing, m_CachedMask.Softness + maskShape.m_EdgeSoftness);
@@ -240,14 +245,7 @@ namespace ProceduralShapes.Runtime
                 System.Array.Copy(m_ShaderSize, state.MaskBoolSize, activeCount);
             }
 
-            Material matToUse = ProceduralMaterialPool.GetMaterial(state, m_CustomBaseMat);
-            
-            if (m_MaskMaterial != null) 
-            {
-                ProceduralMaterialPool.ReleaseMaterial(m_MaskMaterial);
-            }
-            
-            m_MaskMaterial = matToUse;
+            state.ApplyToMaterial(m_MaskMaterial);
 
             return m_MaskMaterial;
         }
@@ -295,9 +293,10 @@ namespace ProceduralShapes.Runtime
             float otherWorldRot = otherRect.eulerAngles.z;
             float relativeRotation = otherWorldRot - maskWorldRot;
 
+            float rotRad = relativeRotation * Mathf.Deg2Rad;
             m_ShaderOps[index] = new Vector4((float)op, (float)shape.m_ShapeType, shape.m_CornerSmoothing, smoothness); 
             m_ShaderShapeParams[index] = shape.GetPackedShapeParams();
-            m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, relativeRotation * Mathf.Deg2Rad, 0);
+            m_ShaderTransform[index] = new Vector4(posInMaskSDF.x, posInMaskSDF.y, Mathf.Sin(-rotRad), Mathf.Cos(-rotRad));
             
             Vector3 lossyScaleRatio = new Vector3(
                 m_CachedMask.Shape.transform.lossyScale.x != 0 ? otherRect.lossyScale.x / m_CachedMask.Shape.transform.lossyScale.x : 0, 

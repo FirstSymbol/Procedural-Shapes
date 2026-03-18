@@ -47,6 +47,10 @@ Shader "UI/ProceduralShapes/Shape"
             #pragma fragment frag
             #pragma target 3.0
 
+            #pragma multi_compile_local SHAPE_RECTANGLE SHAPE_ELLIPSE SHAPE_POLYGON SHAPE_STAR SHAPE_CAPSULE SHAPE_LINE SHAPE_RING SHAPE_PATH SHAPE_TRIANGLE SHAPE_HEART _
+            #pragma multi_compile_local _ HAS_BOOLEANS
+            #pragma multi_compile_local _ HAS_MASK
+
             #include "UnityCG.cginc"
             #include "UnityUI.cginc"
             #include "SDFUtils.cginc"
@@ -67,13 +71,17 @@ Shader "UI/ProceduralShapes/Shape"
             struct v2f {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                float3 normal : NORMAL; 
-                float4 tangent : TANGENT;
-                float4 uv0 : TEXCOORD0;
-                float4 shapeParams : TEXCOORD1;
-                float4 baseData : TEXCOORD2;
-                float4 fillParams : TEXCOORD3;
                 float4 worldPosition : TEXCOORD4;
+                
+                float4 baseData : TEXCOORD2;
+                float4 shapeParams : TEXCOORD1;
+                float4 fillParams : TEXCOORD3;
+                
+                float4 uv0 : TEXCOORD0; 
+                float4 effectData : TEXCOORD5; 
+                float4 precalc1 : TEXCOORD6; 
+                float4 precalc2 : TEXCOORD7; 
+                float4 extraData : TANGENT; 
             };
 
             sampler2D _MainTex;
@@ -110,35 +118,162 @@ Shader "UI/ProceduralShapes/Shape"
                 o.worldPosition = v.vertex;
                 o.vertex = UnityObjectToClipPos(o.worldPosition);
                 o.color = v.color;
-                o.normal = v.normal;
-                o.tangent = v.tangent;
-                o.uv0 = v.texcoord0;
+                
                 o.shapeParams = v.texcoord1;
                 o.baseData = v.texcoord2;
                 o.fillParams = v.texcoord3;
+
+                float effectType = v.texcoord2.w;
+                float blur = 0.0;
+                float aa = 1.0;
+                float internalPadding = 0.0;
+                float spread = v.tangent.x;
+                
+                float2 p_orig = v.texcoord0.xy;
+                float2 p = p_orig;
+                
+                if (effectType == 1.0 || effectType == 3.0) { 
+                    p -= v.normal.xy; 
+                    blur = v.normal.z;
+                    aa = max(v.tangent.y, 0.001); 
+                } else { 
+                    internalPadding = v.normal.x;
+                    aa = max(v.normal.y, 0.001);
+                    blur = v.normal.z;
+                }
+
+                o.uv0 = float4(p.x, p.y, p_orig.x, p_orig.y);
+                o.effectData = float4(blur, aa, internalPadding, spread);
+                o.precalc1 = float4(0,0,0,0);
+                o.precalc2 = float4(v.texcoord0.z, v.texcoord0.w, 0, 0); 
+                o.extraData = float4(0,0, v.tangent.z, v.tangent.w); 
+
+                float2 halfSize = v.texcoord2.xy * 0.5;
+                float4 params = v.texcoord1;
+
+#if defined(SHAPE_POLYGON)
+                float n = max(3.0, params.x); 
+                float an = 3.14159265 / n;
+                float maxR = min(halfSize.x, halfSize.y);
+                float rounding = params.y * maxR * 0.5;
+                float rOuter = maxR - rounding;
+                o.precalc1 = float4(2.0 * an, rOuter * sin(an), rOuter * cos(an), rounding);
+#elif defined(SHAPE_STAR)
+                float n = max(3.0, params.x);
+                float maxR = min(halfSize.x, halfSize.y);
+                float ro = params.z * maxR * 0.5;
+                float rOut = max(maxR - ro, 0.001);
+                float rIn  = max(params.y * maxR - ro, 0.001);
+                float an = 3.1415926535 / n;
+                float2 p1 = float2(0.0, rOut);
+                float2 p2 = float2(rIn * sin(an), rIn * cos(an));
+                float2 ba = p2 - p1;
+                float ba2 = max(dot(ba, ba), 0.00001);
+                o.precalc1 = float4(2.0 * an, rOut, ba2, ro);
+                o.precalc2.zw = p2;
+                o.extraData.xy = float2(params.w * maxR, 0); 
+#elif defined(SHAPE_CAPSULE)
+                float r = params.x * min(halfSize.x, halfSize.y);
+                float2 h = max(halfSize - r, 0.0);
+                o.precalc1 = float4(h.x, h.y, r, 0);
+#elif defined(SHAPE_RING)
+                float maxR = min(halfSize.x, halfSize.y);
+                float innerR = params.x * maxR;
+                float thickness = (maxR - innerR) * 0.5;
+                float midR = (maxR + innerR) * 0.5;
+                float2 p1 = midR * float2(sin(params.y), cos(params.y));
+                float2 p2 = midR * float2(sin(params.z), cos(params.z));
+                float targetDa = frac((params.z - params.y) / 6.28318);
+                o.precalc1 = float4(midR, thickness, targetDa, 0);
+                o.precalc2.zw = p1;
+                o.extraData.xy = p2;
+#endif
                 return o;
             }
 
+            float GetMainPerimeterMapping(float2 p, float2 halfSize) {
+#if defined(SHAPE_RECTANGLE)
+                float w = halfSize.x;
+                float h = halfSize.y;
+                float2 absP = abs(p);
+                if (absP.x * h > absP.y * w) {
+                    if (p.x > 0) return 2.0 * w + (h - p.y);
+                    else return 4.0 * w + 2.0 * h + (p.y + h);
+                } else {
+                    if (p.y > 0) return p.x + w;
+                    else return 2.0 * w + 2.0 * h + (w - p.x);
+                }
+#elif defined(SHAPE_LINE)
+                return p.x;
+#else
+                return (atan2(p.y, p.x) + 3.14159265) * (halfSize.x + halfSize.y) * 0.5;
+#endif
+            }
+
+            float GetMainSDF(float2 p, float2 halfSize, float smoothing, float4 params) {
+#if defined(SHAPE_RECTANGLE)
+                return GetRectangleSDF(p, halfSize, smoothing, params);
+#elif defined(SHAPE_ELLIPSE)
+                return GetEllipseSDF(p, halfSize);
+#elif defined(SHAPE_POLYGON)
+                return GetPolygonSDF(p, halfSize, params);
+#elif defined(SHAPE_STAR)
+                return GetStarSDF(p, halfSize, params);
+#elif defined(SHAPE_CAPSULE)
+                return GetCapsuleSDF(p, halfSize, params);
+#elif defined(SHAPE_LINE)
+                return GetLineSDF(p, smoothing, params);
+#elif defined(SHAPE_RING)
+                return GetRingSDF(p, halfSize, params);
+#elif defined(SHAPE_PATH)
+                return GetPathSDF(p, params, false);
+#elif defined(SHAPE_TRIANGLE)
+                return GetTriangleSDF(p, halfSize);
+#elif defined(SHAPE_HEART)
+                return GetHeartSDF(p, halfSize);
+#else
+                return 100000.0;
+#endif
+            }
+
+
+
+            float GetMainSDF_Optimized(float2 p, float2 halfSize, float smoothing, float4 params, v2f i) {
+#if defined(SHAPE_RECTANGLE)
+                return GetRectangleSDF(p, halfSize, smoothing, params);
+#elif defined(SHAPE_ELLIPSE)
+                return GetEllipseSDF(p, halfSize);
+#elif defined(SHAPE_POLYGON)
+                return GetPolygonSDF_Precalc(p, i.precalc1);
+#elif defined(SHAPE_STAR)
+                return GetStarSDF_Precalc(p, i.precalc1, i.precalc2, i.extraData.x);
+#elif defined(SHAPE_CAPSULE)
+                return GetCapsuleSDF_Precalc(p, i.precalc1);
+#elif defined(SHAPE_LINE)
+                return GetLineSDF(p, smoothing, params);
+#elif defined(SHAPE_RING)
+                return GetRingSDF_Precalc(p, params.y, i.precalc1, i.precalc2, i.extraData.xy);
+#elif defined(SHAPE_PATH)
+                return GetPathSDF(p, params, false);
+#elif defined(SHAPE_TRIANGLE)
+                return GetTriangleSDF(p, halfSize);
+#elif defined(SHAPE_HEART)
+                return GetHeartSDF(p, halfSize);
+#else
+                return 100000.0;
+#endif
+            }
+
             fixed4 frag (v2f i) : SV_Target {
-                float2 p_orig = i.uv0.xy;
-                float2 p = p_orig;
-                float shapeType = floor(i.baseData.z);
-                float customSmoothing = frac(i.baseData.z) / 0.99 * 1000.0;
+                float2 p = i.uv0.xy;
+                float2 p_orig = i.uv0.zw;
+                float customSmoothing = i.baseData.z;
                 float effectType = i.baseData.w; 
                 
-                float aa = 1.0;
-                float blur = 0.0;
-                float internalPadding = 0.0;
-                
-                if (effectType == 1.0 || effectType == 3.0) { // Shadows
-                    p -= i.normal.xy; 
-                    blur = i.normal.z;
-                    aa = max(i.tangent.y, 0.001); 
-                } else { // Main Fill, Stroke, Blur
-                    internalPadding = i.normal.x;
-                    aa = max(i.normal.y, 0.001);
-                    blur = i.normal.z;
-                }
+                float blur = i.effectData.x;
+                float aa = i.effectData.y;
+                float internalPadding = i.effectData.z;
+                float spread = i.effectData.w;
                 
                 float noiseAmount = frac(i.fillParams.z) * 100.0;
                 float noiseScale = i.fillParams.w;
@@ -150,9 +285,21 @@ Shader "UI/ProceduralShapes/Shape"
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
-                float d = GetBasicSDF(p + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams, false);
-                float d_orig = GetBasicSDF(p_orig + noiseOffset, halfSize, shapeType, customSmoothing, i.shapeParams, false);
+                float d = 0;
+                float d_orig = 0;
+                
+                bool needShadowD = (effectType == 1.0 || effectType == 3.0);
+                bool needOrigD = (effectType != 1.0);
 
+                if (needOrigD) {
+                    d_orig = GetMainSDF_Optimized(p_orig + noiseOffset, halfSize, customSmoothing, i.shapeParams, i);
+                }
+                
+                if (needShadowD) {
+                    d = GetMainSDF_Optimized(p + noiseOffset, halfSize, customSmoothing, i.shapeParams, i);
+                }
+
+#if defined(HAS_BOOLEANS)
                 int boolCount = _BoolParams1;
                 if (boolCount > 0) {
                     for (int k = 0; k < 8; k++) {
@@ -167,30 +314,32 @@ Shader "UI/ProceduralShapes/Shape"
 
                         bool isPathOp = boolType > 7.5 && boolType < 8.5;
 
-                        float2 p2 = p - boolTrans.xy;
-                        if (abs(boolTrans.z) > 0.0001) {
-                            float s = sin(-boolTrans.z); float c = cos(-boolTrans.z);
-                            p2 = float2(p2.x * c - p2.y * s, p2.x * s + p2.y * c);
+                        if (needOrigD) {
+                            float2 p2_orig = p_orig - boolTrans.xy;
+                            if (abs(boolTrans.z) > 0.0001 || abs(boolTrans.w - 1.0) > 0.0001) {
+                                p2_orig = float2(p2_orig.x * boolTrans.w - p2_orig.y * boolTrans.z, p2_orig.x * boolTrans.z + p2_orig.y * boolTrans.w);
+                            }
+                            float d2_orig = GetBasicSDF(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
+                            if (smoothBlend > 0.001) d_orig = smin_op(d_orig, d2_orig, boolOp, smoothBlend);
+                            else d_orig = hard_op(d_orig, d2_orig, boolOp);
                         }
-                        float d2 = GetBasicSDF(p2 + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
-                        if (smoothBlend > 0.001) d = smin_op(d, d2, boolOp, smoothBlend);
-                        else d = hard_op(d, d2, boolOp);
 
-                        float2 p2_orig = p_orig - boolTrans.xy;
-                        if (abs(boolTrans.z) > 0.0001) {
-                            float s = sin(-boolTrans.z); float c = cos(-boolTrans.z);
-                            p2_orig = float2(p2_orig.x * c - p2_orig.y * s, p2_orig.x * s + p2_orig.y * c);
+                        if (needShadowD) {
+                            float2 p2 = p - boolTrans.xy;
+                            if (abs(boolTrans.z) > 0.0001 || abs(boolTrans.w - 1.0) > 0.0001) {
+                                p2 = float2(p2.x * boolTrans.w - p2.y * boolTrans.z, p2.x * boolTrans.z + p2.y * boolTrans.w);
+                            }
+                            float d2 = GetBasicSDF(p2 + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
+                            if (smoothBlend > 0.001) d = smin_op(d, d2, boolOp, smoothBlend);
+                            else d = hard_op(d, d2, boolOp);
                         }
-                        float d2_orig = GetBasicSDF(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
-                        if (smoothBlend > 0.001) d_orig = smin_op(d_orig, d2_orig, boolOp, smoothBlend);
-                        else d_orig = hard_op(d_orig, d2_orig, boolOp);
                     }
                 }
+#endif
                 
-                d += internalPadding;
-                d_orig += internalPadding;
+                if (needOrigD) d_orig += internalPadding;
+                if (needShadowD) d += internalPadding;
 
-                float spread = i.tangent.x;
                 float mask = 0;
 
                 if (effectType == 1.0) { // Drop Shadow
@@ -198,12 +347,13 @@ Shader "UI/ProceduralShapes/Shape"
                     mask = smoothstep(max(blur, aa), -max(blur, aa), d);
                 }
                 else if (effectType == 2.0) { // Stroke
-                    float alignment = i.tangent.y;
+                    float alignment = i.extraData.w; // originally i.tangent.y
                     float strokeOffset = (alignment == 0) ? -spread * 0.5 : ((alignment == 2) ? spread * 0.5 : 0);
                     float strokeD = abs(d_orig - strokeOffset) - spread * 0.5;
-                    if (i.uv0.z > 0.001) {
-                        float perimeter = (shapeType == 5.0) ? (p_orig + noiseOffset).x : GetPerimeterMapping(p_orig + noiseOffset, halfSize, shapeType);
-                        if (frac(perimeter / (i.uv0.z + i.uv0.w)) > (i.uv0.z / (i.uv0.z + i.uv0.w))) discard;
+                    float2 dashData = i.precalc2.xy;
+                    if (dashData.x > 0.001) {
+                        float perimeter = GetMainPerimeterMapping(p_orig + noiseOffset, halfSize);
+                        if (frac(perimeter / (dashData.x + dashData.y)) > (dashData.x / (dashData.x + dashData.y))) discard;
                     }
                     mask = smoothstep(aa, -aa, strokeD);
                 }
@@ -224,7 +374,7 @@ Shader "UI/ProceduralShapes/Shape"
                 float fillType = i.fillParams.y;
                 float gradAngle = i.fillParams.z;
                 float gradScale = i.fillParams.w;
-                float2 gradOffset = i.tangent.zw;
+                float2 gradOffset = float2(i.extraData.z, i.extraData.w); // originally i.tangent.zw
 
                 float4 colorSample;
                 if (fillType > 3.5) { // Pattern
@@ -250,12 +400,12 @@ Shader "UI/ProceduralShapes/Shape"
                 float4 finalColor = colorSample * i.color;
                 
                 if (effectType == 5.0) {
-                    float dist = max(i.normal.z, 0.5);
-                    float2 bDir = float2(cos(i.tangent.z), sin(i.tangent.z));
-                    float diff = GetBasicSDF(p_orig + noiseOffset + bDir * dist, halfSize, shapeType, customSmoothing, i.shapeParams) - 
-                                 GetBasicSDF(p_orig + noiseOffset - bDir * dist, halfSize, shapeType, customSmoothing, i.shapeParams);
-                    float highlight = saturate(diff / (dist * 2.0)) * i.tangent.x;
-                    float shadow = saturate(-diff / (dist * 2.0)) * i.tangent.y;
+                    float dist = max(blur, 0.5); // blur holds normal.z in effectType 5 (bevel distance)
+                    float2 bDir = float2(cos(i.extraData.z), sin(i.extraData.z)); // extraData.z holds tangent.z
+                    float diff = GetMainSDF_Optimized(p_orig + noiseOffset + bDir * dist, halfSize, customSmoothing, i.shapeParams, i) - 
+                                 GetMainSDF_Optimized(p_orig + noiseOffset - bDir * dist, halfSize, customSmoothing, i.shapeParams, i);
+                    float highlight = saturate(diff / (dist * 2.0)) * spread; // spread holds tangent.x
+                    float shadow = saturate(-diff / (dist * 2.0)) * i.extraData.w; // extraData.w holds tangent.y
                     float baseMask = smoothstep(aa, -aa, d_orig);
                     if (baseMask <= 0.001) discard;
                     finalColor = (shadow > highlight) ? float4(0,0,0, shadow) : float4(1,1,1, highlight);

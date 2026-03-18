@@ -10,6 +10,7 @@ namespace ProceduralShapes.Runtime
     /// </summary>
     public class ShaderState : IEquatable<ShaderState>
     {
+        public ShapeType ShapeType;
         public int BaseMatId;
         public Texture MainTex;
         public Texture PatternTex;
@@ -44,6 +45,7 @@ namespace ProceduralShapes.Runtime
 
         public void Clear()
         {
+            ShapeType = ShapeType.Rectangle;
             BaseMatId = 0; MainTex = null; PatternTex = null; InternalPadding = 0;
             PathPointCount = 0; BoolPathPointCount = 0; BoolCount = 0;
             HasMask = false; MaskBoolCount = 0;
@@ -52,6 +54,7 @@ namespace ProceduralShapes.Runtime
         public ShaderState Clone()
         {
             var clone = new ShaderState();
+            clone.ShapeType = ShapeType;
             clone.BaseMatId = BaseMatId;
             clone.MainTex = MainTex;
             clone.PatternTex = PatternTex;
@@ -98,7 +101,7 @@ namespace ProceduralShapes.Runtime
         public bool Equals(ShaderState other)
         {
             if (other == null) return false;
-            if (BaseMatId != other.BaseMatId || MainTex != other.MainTex || PatternTex != other.PatternTex || 
+            if (ShapeType != other.ShapeType || BaseMatId != other.BaseMatId || MainTex != other.MainTex || PatternTex != other.PatternTex || 
                 Mathf.Abs(InternalPadding - other.InternalPadding) > 0.001f || HasMask != other.HasMask) return false;
 
             if (PathPointCount != other.PathPointCount) return false;
@@ -135,6 +138,7 @@ namespace ProceduralShapes.Runtime
         {
             int hash = 17;
             unchecked {
+                hash = hash * 23 + (int)ShapeType;
                 hash = hash * 23 + BaseMatId;
                 hash = hash * 23 + (MainTex ? MainTex.GetInstanceID() : 0);
                 hash = hash * 23 + InternalPadding.GetHashCode();
@@ -149,6 +153,34 @@ namespace ProceduralShapes.Runtime
 
         public void ApplyToMaterial(Material mat)
         {
+            mat.DisableKeyword("SHAPE_RECTANGLE");
+            mat.DisableKeyword("SHAPE_ELLIPSE");
+            mat.DisableKeyword("SHAPE_POLYGON");
+            mat.DisableKeyword("SHAPE_STAR");
+            mat.DisableKeyword("SHAPE_CAPSULE");
+            mat.DisableKeyword("SHAPE_LINE");
+            mat.DisableKeyword("SHAPE_RING");
+            mat.DisableKeyword("SHAPE_PATH");
+            mat.DisableKeyword("SHAPE_TRIANGLE");
+            mat.DisableKeyword("SHAPE_HEART");
+
+            switch (ShapeType)
+            {
+                case ProceduralShapes.Runtime.ShapeType.Rectangle: mat.EnableKeyword("SHAPE_RECTANGLE"); break;
+                case ProceduralShapes.Runtime.ShapeType.Ellipse: mat.EnableKeyword("SHAPE_ELLIPSE"); break;
+                case ProceduralShapes.Runtime.ShapeType.Polygon: mat.EnableKeyword("SHAPE_POLYGON"); break;
+                case ProceduralShapes.Runtime.ShapeType.Star: mat.EnableKeyword("SHAPE_STAR"); break;
+                case ProceduralShapes.Runtime.ShapeType.Capsule: mat.EnableKeyword("SHAPE_CAPSULE"); break;
+                case ProceduralShapes.Runtime.ShapeType.Line: mat.EnableKeyword("SHAPE_LINE"); break;
+                case ProceduralShapes.Runtime.ShapeType.Ring: mat.EnableKeyword("SHAPE_RING"); break;
+                case ProceduralShapes.Runtime.ShapeType.Path: mat.EnableKeyword("SHAPE_PATH"); break;
+                case ProceduralShapes.Runtime.ShapeType.Triangle: mat.EnableKeyword("SHAPE_TRIANGLE"); break;
+                case ProceduralShapes.Runtime.ShapeType.Heart: mat.EnableKeyword("SHAPE_HEART"); break;
+            }
+
+            if (BoolCount > 0) mat.EnableKeyword("HAS_BOOLEANS"); else mat.DisableKeyword("HAS_BOOLEANS");
+            if (HasMask) mat.EnableKeyword("HAS_MASK"); else mat.DisableKeyword("HAS_MASK");
+
             if (MainTex) mat.SetTexture("_MainTex", MainTex);
             if (PatternTex) mat.SetTexture("_PatternTex", PatternTex);
             mat.SetFloat("_InternalPadding", InternalPadding);

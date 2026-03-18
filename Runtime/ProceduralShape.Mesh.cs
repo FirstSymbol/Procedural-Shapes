@@ -197,8 +197,7 @@ namespace ProceduralShapes.Runtime
         /// <summary> Упаковывает базовые данные (размер, тип, эффект) для шейдера. </summary>
         private Vector4 GetPackedBaseData(Rect rect, int effectType, float smoothing)
         {
-            float packedShapeData = (float)m_ShapeType + (Mathf.Clamp01(smoothing / 1000f) * 0.99f);
-            return new Vector4(rect.width * m_ShapeScale2D.x, rect.height * m_ShapeScale2D.y, packedShapeData, effectType);
+            return new Vector4(rect.width * m_ShapeScale2D.x, rect.height * m_ShapeScale2D.y, smoothing, effectType);
         }
 
         /// <summary> Упаковывает параметры заливки и шума. </summary>
@@ -341,11 +340,9 @@ namespace ProceduralShapes.Runtime
             float customSmoothing = m_CornerSmoothing;
             if (m_ShapeType == ShapeType.Line) customSmoothing = m_LineWidth;
 
-            float packedShapeData = (float)m_ShapeType + (Mathf.Clamp01(customSmoothing / 1000f) * 0.99f);
-            
             float scaledW = baseRect.width * m_ShapeScale2D.x;
             float scaledH = baseRect.height * m_ShapeScale2D.y;
-            Vector4 uv2_baseData = new Vector4(scaledW, scaledH, packedShapeData, effectType);
+            Vector4 uv2_baseData = new Vector4(scaledW, scaledH, customSmoothing, effectType);
             
             Vector4 uv3_fillParams = GetPackedFillParams(textureRowIndex, fill);
 
