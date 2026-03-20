@@ -60,7 +60,6 @@ float noise(float2 p) {
 }
 
 float GetRectangleSDF(float2 p, float2 halfSize, float smoothing, float4 params) {
-    // Векторизованный выбор радиуса угла без if/else (step возвращает 0.0 или 1.0)
     float2 s = step(0.0, p); 
     float topR = lerp(params.x, params.y, s.x);
     float botR = lerp(params.w, params.z, s.x);
@@ -68,9 +67,12 @@ float GetRectangleSDF(float2 p, float2 halfSize, float smoothing, float4 params)
     
     float2 q = abs(p) - halfSize + r;
     
-    if (smoothing > 0.001 && r > 0.001) {
+    if (smoothing > 0.01 && r > 0.01) {
         float n = lerp(2.0, 4.5, smoothing); 
         float2 q0 = max(q, 0.0);
+        // Оптимизация: используем length (n=2.0) если сглаживание минимально
+        if (n < 2.05) return min(max(q.x, q.y), 0.0) + length(q0) - r;
+        
         float cornerDist = pow(pow(abs(q0.x), n) + pow(abs(q0.y), n), 1.0 / n);
         return min(max(q.x, q.y), 0.0) + cornerDist - r;
     }

@@ -109,20 +109,27 @@ namespace ProceduralShapes.Runtime
             state.MainTex = mainTexture;
             state.PatternTex = MainFill.Type == FillType.Pattern ? MainFill.PatternTexture : null;
             state.InternalPadding = m_InternalPadding;
+            state.HasNoise = m_EdgeNoiseAmount > 0.001f;
 
             if (m_ShapeType == ShapeType.Path && m_FlattenedPath != null)
             {
+                if (state.PathData == null) state.PathData = new Vector4[64];
                 ApplyPathDataToState(state.PathData, out state.PathPointCount, m_FlattenedPath);
             }
 
             if (firstPathOperator != null)
             {
+                if (state.BoolPathData == null) state.BoolPathData = new Vector4[64];
                 ApplyPathDataToState(state.BoolPathData, out state.BoolPathPointCount, firstPathOperator.m_FlattenedPath);
             }
 
             state.BoolCount = m_ActiveBoolCount;
             if (m_ActiveBoolCount > 0)
             {
+                if (state.BoolOpType == null) {
+                    state.BoolOpType = new Vector4[8]; state.BoolShapeParams = new Vector4[8];
+                    state.BoolTransform = new Vector4[8]; state.BoolSize = new Vector4[8];
+                }
                 System.Array.Copy(m_ShaderOps, state.BoolOpType, m_ActiveBoolCount);
                 System.Array.Copy(m_ShaderShapeParams, state.BoolShapeParams, m_ActiveBoolCount);
                 System.Array.Copy(m_ShaderTransform, state.BoolTransform, m_ActiveBoolCount);
@@ -143,6 +150,10 @@ namespace ProceduralShapes.Runtime
                 state.MaskBoolCount = m_ActiveMaskBoolCount;
                 if (m_ActiveMaskBoolCount > 0)
                 {
+                    if (state.MaskBoolOpType == null) {
+                        state.MaskBoolOpType = new Vector4[8]; state.MaskBoolShapeParams = new Vector4[8];
+                        state.MaskBoolTransform = new Vector4[8]; state.MaskBoolSize = new Vector4[8];
+                    }
                     System.Array.Copy(m_MaskShaderOps, state.MaskBoolOpType, m_ActiveMaskBoolCount);
                     System.Array.Copy(m_MaskShaderShapeParams, state.MaskBoolShapeParams, m_ActiveMaskBoolCount);
                     System.Array.Copy(m_MaskShaderTransform, state.MaskBoolTransform, m_ActiveMaskBoolCount);
@@ -150,7 +161,7 @@ namespace ProceduralShapes.Runtime
                 }
             }
 
-            bool isUnique = hasMask || m_ActiveBoolCount > 0 || firstPathOperator != null;
+            bool isUnique = hasMask || m_ActiveBoolCount > 0 || firstPathOperator != null || m_ShapeType == ShapeType.Path;
 
             if (isUnique)
             {
