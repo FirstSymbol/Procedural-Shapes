@@ -21,7 +21,7 @@ namespace ProceduralShapes.Editor
 
         private SerializedProperty m_Size, m_Color, m_DisableRendering;
         private SerializedProperty m_EdgeSoftness, m_InternalPadding;
-        private SerializedProperty m_ShapeScale2D, m_LinkScale, m_ShapePivot, m_ShapeType;
+        private SerializedProperty m_ShapeScale2D, m_LinkScale, m_ShapePivot, m_ShapeType, m_StretchToFill;
         private SerializedProperty m_MainFill, m_BooleanOperations, m_Effects;
 
         protected void OnEnable()
@@ -35,6 +35,7 @@ namespace ProceduralShapes.Editor
             m_LinkScale = serializedObject.FindProperty("m_LinkScale");
             m_ShapePivot = serializedObject.FindProperty("m_ShapePivot");
             m_ShapeType = serializedObject.FindProperty("m_ShapeType");
+            m_StretchToFill = serializedObject.FindProperty("m_StretchToFill");
             m_MainFill = serializedObject.FindProperty("MainFill");
             m_BooleanOperations = serializedObject.FindProperty("BooleanOperations");
             m_Effects = serializedObject.FindProperty("Effects");

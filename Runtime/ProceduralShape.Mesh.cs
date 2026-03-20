@@ -153,6 +153,7 @@ namespace ProceduralShapes.Runtime
             vert.uv2 = GetPackedBaseData(baseRect, effectType, m_CornerSmoothing);
             vert.uv3 = GetPackedFillParams(textureRowIndex, fill);
 
+            Vector2 stretch = GetStretchScale();
             vert.position = new Vector3(cx, cy);
             vert.uv0 = new Vector4(0, 0, dashData.x, dashData.y);
             vh.AddVert(vert);
@@ -170,7 +171,7 @@ namespace ProceduralShapes.Runtime
 
                 Vector2 pos = new Vector2(cx + s * hw * r, cy + c * hh * r);
                 vert.position = pos;
-                vert.uv0 = new Vector4(pos.x - cx, pos.y - cy, dashData.x, dashData.y);
+                vert.uv0 = new Vector4((pos.x - cx) * stretch.x, (pos.y - cy) * stretch.y, dashData.x, dashData.y);
                 vh.AddVert(vert);
 
                 if (i > 0)
@@ -194,10 +195,21 @@ namespace ProceduralShapes.Runtime
             return Vector4.zero;
         }
 
+        public Vector2 GetStretchScale()
+        {
+            Rect r = rectTransform.rect;
+            float scaledW = r.width * m_ShapeScale2D.x;
+            float scaledH = r.height * m_ShapeScale2D.y;
+            if (!m_StretchToFill || scaledW <= 0.001f || scaledH <= 0.001f) return Vector2.one;
+            float minSize = Mathf.Min(scaledW, scaledH);
+            return new Vector2(minSize / scaledW, minSize / scaledH);
+        }
+
         /// <summary> Упаковывает базовые данные (размер, тип, эффект) для шейдера. </summary>
         private Vector4 GetPackedBaseData(Rect rect, int effectType, float smoothing)
         {
-            return new Vector4(rect.width * m_ShapeScale2D.x, rect.height * m_ShapeScale2D.y, smoothing, effectType);
+            Vector2 stretch = GetStretchScale();
+            return new Vector4(rect.width * m_ShapeScale2D.x * stretch.x, rect.height * m_ShapeScale2D.y * stretch.y, smoothing, effectType);
         }
 
         /// <summary> Упаковывает параметры заливки и шума. </summary>
@@ -368,10 +380,11 @@ namespace ProceduralShapes.Runtime
             vert.uv3 = uv3_fillParams;
             
             // Заполнение вершин квада
-            vert.position = new Vector3(minX, minY); vert.uv0 = new Vector4(minX - cx, minY - cy, dashData.x, dashData.y); vh.AddVert(vert);
-            vert.position = new Vector3(minX, maxY); vert.uv0 = new Vector4(minX - cx, maxY - cy, dashData.x, dashData.y); vh.AddVert(vert);
-            vert.position = new Vector3(maxX, maxY); vert.uv0 = new Vector4(maxX - cx, maxY - cy, dashData.x, dashData.y); vh.AddVert(vert);
-            vert.position = new Vector3(maxX, minY); vert.uv0 = new Vector4(maxX - cx, minY - cy, dashData.x, dashData.y); vh.AddVert(vert);
+            Vector2 stretch = GetStretchScale();
+            vert.position = new Vector3(minX, minY); vert.uv0 = new Vector4((minX - cx) * stretch.x, (minY - cy) * stretch.y, dashData.x, dashData.y); vh.AddVert(vert);
+            vert.position = new Vector3(minX, maxY); vert.uv0 = new Vector4((minX - cx) * stretch.x, (maxY - cy) * stretch.y, dashData.x, dashData.y); vh.AddVert(vert);
+            vert.position = new Vector3(maxX, maxY); vert.uv0 = new Vector4((maxX - cx) * stretch.x, (maxY - cy) * stretch.y, dashData.x, dashData.y); vh.AddVert(vert);
+            vert.position = new Vector3(maxX, minY); vert.uv0 = new Vector4((maxX - cx) * stretch.x, (minY - cy) * stretch.y, dashData.x, dashData.y); vh.AddVert(vert);
 
             vh.AddTriangle(startIndex + 0, startIndex + 1, startIndex + 2);
             vh.AddTriangle(startIndex + 2, startIndex + 3, startIndex + 0);

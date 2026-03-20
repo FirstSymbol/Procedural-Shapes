@@ -82,7 +82,7 @@ Shader "UI/ProceduralShapes/Shape"
                 float4 effectData : TEXCOORD5; 
                 float4 precalc1 : TEXCOORD6; 
                 float4 precalc2 : TEXCOORD7; 
-                float4 extraData : TANGENT; 
+                float4 extraData : TEXCOORD8; 
             };
 
             sampler2D _MainTex;
@@ -175,8 +175,7 @@ Shader "UI/ProceduralShapes/Shape"
                 o.extraData.xy = float2(params.w * maxR, 0); 
 #elif defined(SHAPE_CAPSULE)
                 float r = params.x * min(halfSize.x, halfSize.y);
-                float2 h = max(halfSize - r, 0.0);
-                o.precalc1 = float4(h.x, h.y, r, 0);
+                o.precalc1 = float4(halfSize.x, halfSize.y, r, 0);
 #elif defined(SHAPE_RING)
                 float maxR = min(halfSize.x, halfSize.y);
                 float innerR = params.x * maxR;

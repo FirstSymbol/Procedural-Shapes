@@ -93,18 +93,19 @@ namespace ProceduralShapes.Runtime
                     if (rInner > 0.001f)
                     {
                         float h = Mathf.Clamp01(0.5f + 0.5f * (dist1 - dist0) / rInner);
-                        finalDist = Mathf.Lerp(dist1, dist0, h) - rInner * h * (1.0f - h);
+                        float sminDist = Mathf.Lerp(dist1, dist0, h) - rInner * h * (1.0f - h);
+                        float t = Mathf.Clamp01(-dist0 / rInner);
+                        float smoothT = t * t * (3.0f - 2.0f * t);
+                        finalDist = Mathf.Lerp(sminDist, dist0, smoothT);
                     }
                     
                     return finalDist - ro;
                 }
 
                 case ShapeType.Capsule:
-                    // params4: X=Rounding (скругление)
                     float cr = params4.x * minHalfSize;
-                    Vector2 ch = Vector2.Max(halfSize - new Vector2(cr, cr), Vector2.zero);
-                    Vector2 cq = new Vector2(Mathf.Abs(p.x), Mathf.Abs(p.y)) - ch;
-                    return Vector2.Max(cq, Vector2.zero).magnitude + Mathf.Min(Mathf.Max(cq.x, cq.y), 0.0f) - cr;
+                    Vector2 cq = new Vector2(Mathf.Abs(p.x), Mathf.Abs(p.y)) - halfSize + new Vector2(cr, cr);
+                    return Mathf.Min(Mathf.Max(cq.x, cq.y), 0.0f) + Vector2.Max(cq, Vector2.zero).magnitude - cr;
 
                 case ShapeType.Line:
                 {

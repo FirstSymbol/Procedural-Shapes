@@ -29,6 +29,8 @@ namespace ProceduralShapes.Runtime
         float EdgeNoiseAmount { get; }
         float EdgeNoiseScale { get; }
         
+        bool StretchToFill { get; }
+
         ShapeFill MainFill { get; }
         List<ProceduralEffect> Effects { get; }
         List<BooleanInput> BooleanOperations { get; }

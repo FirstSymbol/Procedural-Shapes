@@ -73,14 +73,16 @@ namespace ProceduralShapes.Runtime
                 Vector3 maskRectCenterFromPivot = new Vector3((0.5f - maskPivot.x) * maskSizeRaw.x, (0.5f - maskPivot.y) * maskSizeRaw.y, 0f);
                 Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
                 Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
-                Matrix4x4 localToMaskSDF = maskCenterTranslate * maskWorldToLocal * childLocalToWorld;
+                Vector2 maskStretch = maskS.GetStretchScale();
+                Matrix4x4 stretchMatrix = Matrix4x4.Scale(new Vector3(maskStretch.x, maskStretch.y, 1f));
+                Matrix4x4 localToMaskSDF = stretchMatrix * maskCenterTranslate * maskWorldToLocal * childLocalToWorld;
                 
                 Vector2 childGeomCenterLocal = rectTransform.rect.center + selfCenterOffset;
                 Matrix4x4 childGeomToLocal = Matrix4x4.Translate(new Vector3(childGeomCenterLocal.x, childGeomCenterLocal.y, 0));
                 maskMatrix = localToMaskSDF * childGeomToLocal;
 
                 Vector2 mScale = maskS.ShapeScale;
-                maskSize = new Vector4(maskSizeRaw.x * mScale.x, maskSizeRaw.y * mScale.y, 0, 0);
+                maskSize = new Vector4(maskSizeRaw.x * mScale.x * maskStretch.x, maskSizeRaw.y * mScale.y * maskStretch.y, 0, 0);
                 maskParams = new Vector4(1f, (float)maskS.m_ShapeType, maskS.m_CornerSmoothing, m_CachedMask.Softness + maskS.m_EdgeSoftness);
                 maskShape = maskS.GetPackedShapeParams();
                 maskTex = maskS.mainTexture;
@@ -93,7 +95,7 @@ namespace ProceduralShapes.Runtime
                 maskFillParams = new Vector4((float)mFill.Type, mFill.GradientAngle, mFill.GradientScale, (float)maskRowIndex);
                 maskFillOffset = new Vector4(mFill.GradientOffset.x, mFill.GradientOffset.y, maskAlphaMult, 0);
                 
-                Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
+                Matrix4x4 worldToMaskSDF = stretchMatrix * maskCenterTranslate * maskWorldToLocal;
                 
                 s_VisitedShapes.Clear();
                 s_VisitedShapes.Add(maskS);
@@ -238,11 +240,14 @@ namespace ProceduralShapes.Runtime
         /// <summary> Подготавливает параметры конкретной фигуры-оператора для шейдера. </summary>
         private void AddShapeToShader(ProceduralShape shape, BooleanOperation op, int index, Matrix4x4 rootWorldToLocal, Vector3 rootCenterOffset, float smoothness)
         {
+            Vector2 stretch = GetStretchScale();
             RectTransform otherRect = shape.rectTransform;
             Vector3 otherPivotOffset = shape.GetGeometricCenterOffset();
             Vector3 otherCenterWorld = otherRect.TransformPoint((Vector3)otherRect.rect.center + otherPivotOffset);
             Vector3 targetPosInRootLocal = rootWorldToLocal.MultiplyPoint3x4(otherCenterWorld);
             Vector3 finalPos = targetPosInRootLocal - rootCenterOffset;
+            finalPos.x *= stretch.x;
+            finalPos.y *= stretch.y;
 
             float relativeRotation = otherRect.eulerAngles.z - rectTransform.eulerAngles.z;
 
@@ -260,8 +265,8 @@ namespace ProceduralShapes.Runtime
                 rectTransform.lossyScale.y != 0 ? otherRect.lossyScale.y / rectTransform.lossyScale.y : 0, 
                 1f);
             
-            float finalW = otherRect.rect.width * lossyScaleRatio.x * otherScale.x;
-            float finalH = otherRect.rect.height * lossyScaleRatio.y * otherScale.y;
+            float finalW = otherRect.rect.width * lossyScaleRatio.x * otherScale.x * stretch.x;
+            float finalH = otherRect.rect.height * lossyScaleRatio.y * otherScale.y * stretch.y;
 
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
         }

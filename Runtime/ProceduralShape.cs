@@ -114,6 +114,14 @@ namespace ProceduralShapes.Runtime
         /// <summary> Список фигур, которые взаимодействуют с текущей (вычитание, объединение и т.д.). </summary>
         public List<BooleanInput> BooleanOperations = new List<BooleanInput>();
 
+        [Tooltip("Растягивать фигуру по всему размеру вместо сохранения пропорций.")]
+        [SerializeField] private bool m_StretchToFill = false;
+        public bool StretchToFill
+        {
+            get => m_StretchToFill;
+            set { if (m_StretchToFill != value) { m_StretchToFill = value; SetAllDirty(); } }
+        }
+
         [Header("Внешний вид (Appearance)")]
         /// <summary> Настройки заливки основной фигуры. </summary>
         public ShapeFill MainFill = new ShapeFill();

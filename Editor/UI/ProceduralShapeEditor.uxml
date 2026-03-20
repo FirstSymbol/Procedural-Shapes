@@ -22,6 +22,7 @@
             </ui:VisualElement>
             <ui:VisualElement class="ps-section-content">
                 <uie:PropertyField binding-path="m_ShapeType" label="Shape Type" name="shape-type-field" />
+                <uie:PropertyField binding-path="m_StretchToFill" label="Stretch To Fill" name="stretch-to-fill-field" />
                 
                 <ui:VisualElement name="scale-pivot-row" style="flex-direction: row; justify-content: space-between;">
                     <uie:PropertyField binding-path="m_ShapeScale2D" label="Scale" name="scale-field" style="flex-grow: 1;" />

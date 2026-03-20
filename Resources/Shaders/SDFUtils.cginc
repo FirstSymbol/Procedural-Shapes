@@ -125,14 +125,19 @@ float GetStarSDF(float2 p, float2 halfSize, float4 params) {
     float dist1 = length(d1) * s1;
     float rInner = params.w * maxR;
     float finalDist = dist0;
-    if (rInner > 0.001) finalDist = smin(dist0, dist1, rInner);
+    if (rInner > 0.001) {
+        float sminDist = smin(dist0, dist1, rInner);
+        float t = clamp(-dist0 / rInner, 0.0, 1.0);
+        float smoothT = t * t * (3.0 - 2.0 * t);
+        finalDist = lerp(sminDist, dist0, smoothT);
+    }
     return finalDist - ro;
 }
 
 float GetCapsuleSDF(float2 p, float2 halfSize, float4 params) {
     float r = params.x * min(halfSize.x, halfSize.y);
-    float2 h = max(halfSize - r, 0.0);
-    return length(p - clamp(p, -h, h)) - r;
+    float2 q = abs(p) - halfSize + r;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
 float GetLineSDF(float2 p, float smoothing, float4 params) {
@@ -206,14 +211,18 @@ float GetStarSDF_Precalc(float2 p, float4 precalc1, float4 precalc2, float rInne
     float dist1 = length(d1) * ((pa1.y * ba.x - pa1.x * ba.y >= 0.0) ? 1.0 : -1.0);
     
     float finalDist = dist0;
-    if (rInner > 0.001) finalDist = smin(dist0, dist1, rInner);
+    if (rInner > 0.001) {
+        float sminDist = smin(dist0, dist1, rInner);
+        float t = clamp(-dist0 / rInner, 0.0, 1.0);
+        float smoothT = t * t * (3.0 - 2.0 * t);
+        finalDist = lerp(sminDist, dist0, smoothT);
+    }
     return finalDist - ro;
 }
 
 float GetCapsuleSDF_Precalc(float2 p, float4 precalc1) {
-    float2 h = precalc1.xy;
-    float r = precalc1.z;
-    return length(p - clamp(p, -h, h)) - r;
+    float2 q = abs(p) - precalc1.xy + precalc1.z;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - precalc1.z;
 }
 
 float GetRingSDF_Precalc(float2 p, float params_y, float4 precalc1, float4 precalc2, float2 p2) {

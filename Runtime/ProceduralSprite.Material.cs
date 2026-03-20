@@ -145,11 +145,18 @@ namespace ProceduralShapes.Runtime
 
         private void AddShapeToShader(ProceduralSprite shape, BooleanOperation op, int index, Matrix4x4 rootWorldToLocal, Vector3 rootCenterOffset, float smoothness)
         {
+            Vector2 stretch = GetStretchScale();
+            Vector2 ls = transform.lossyScale;
+            ls.x = Mathf.Max(Mathf.Abs(ls.x), 0.001f);
+            ls.y = Mathf.Max(Mathf.Abs(ls.y), 0.001f);
+
             Transform otherRect = shape.transform;
             Vector3 otherPivotOffset = shape.GetGeometricCenterOffset();
             Vector3 otherCenterWorld = otherRect.TransformPoint((Vector3)shape.GetRect().center + otherPivotOffset);
             Vector3 targetPosInRootLocal = rootWorldToLocal.MultiplyPoint3x4(otherCenterWorld);
             Vector3 finalPos = targetPosInRootLocal - rootCenterOffset;
+            finalPos.x *= ls.x * stretch.x;
+            finalPos.y *= ls.y * stretch.y;
 
             float relativeRotation = otherRect.eulerAngles.z - transform.eulerAngles.z;
 
@@ -162,13 +169,10 @@ namespace ProceduralShapes.Runtime
             m_ShaderTransform[index] = new Vector4(finalPos.x, finalPos.y, Mathf.Sin(-rotRad), Mathf.Cos(-rotRad));
             
             Vector2 otherScale = shape.ShapeScale; 
-            Vector3 lossyScaleRatio = new Vector3(
-                transform.lossyScale.x != 0 ? otherRect.lossyScale.x / transform.lossyScale.x : 0, 
-                transform.lossyScale.y != 0 ? otherRect.lossyScale.y / transform.lossyScale.y : 0, 
-                1f);
+            Vector3 otherLs = otherRect.lossyScale;
             
-            float finalW = shape.Size.x * lossyScaleRatio.x * otherScale.x;
-            float finalH = shape.Size.y * lossyScaleRatio.y * otherScale.y;
+            float finalW = shape.Size.x * otherLs.x * otherScale.x * stretch.x;
+            float finalH = shape.Size.y * otherLs.y * otherScale.y * stretch.y;
 
             m_ShaderSize[index] = new Vector4(finalW, finalH, 0, 0);
         }

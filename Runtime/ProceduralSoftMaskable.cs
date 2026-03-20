@@ -191,10 +191,12 @@ namespace ProceduralShapes.Runtime
             Vector3 maskTotalCenterCorrection = maskRectCenterFromPivot + (Vector3)maskPivotOffset;
             
             Matrix4x4 maskCenterTranslate = Matrix4x4.Translate(-maskTotalCenterCorrection);
-            Matrix4x4 localToMaskSDF = maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
+            Vector2 maskStretch = maskShape.GetStretchScale();
+            Matrix4x4 stretchMatrix = Matrix4x4.Scale(new Vector3(maskStretch.x, maskStretch.y, 1f));
+            Matrix4x4 localToMaskSDF = stretchMatrix * maskCenterTranslate * maskWorldToLocal * imageLocalToWorld;
 
             Vector2 maskScale = maskShape.ShapeScale;
-            Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x, maskSizeRaw.y * maskScale.y); 
+            Vector2 maskSize = new Vector2(maskSizeRaw.x * maskScale.x * maskStretch.x, maskSizeRaw.y * maskScale.y * maskStretch.y); 
 
             Texture gradientTex = maskShape.mainTexture; 
             ShapeFill fill = maskShape.MainFill;
@@ -204,7 +206,7 @@ namespace ProceduralShapes.Runtime
             if (fill.Type == FillType.Solid) maskAlphaMult *= fill.SolidColor.a;
 
             int activeCount = 0;
-            Matrix4x4 worldToMaskSDF = maskCenterTranslate * maskWorldToLocal;
+            Matrix4x4 worldToMaskSDF = stretchMatrix * maskCenterTranslate * maskWorldToLocal;
             
             ProceduralShape.s_VisitedShapes.Clear();
             ProceduralShape.s_VisitedShapes.Add(maskShape);

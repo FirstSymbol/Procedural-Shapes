@@ -104,6 +104,14 @@ namespace ProceduralShapes.Runtime
         [Header("Булевы операции")]
         public List<BooleanInputSprite> BooleanOperations = new List<BooleanInputSprite>();
 
+        [Tooltip("Растягивать фигуру по всему размеру вместо сохранения пропорций.")]
+        [SerializeField] private bool m_StretchToFill = false;
+        public bool StretchToFill
+        {
+            get => m_StretchToFill;
+            set { if (m_StretchToFill != value) { m_StretchToFill = value; SetAllDirty(); } }
+        }
+
         [Header("Внешний вид")]
         public ShapeFill MainFill = new ShapeFill();
         [SerializeReference] public List<ProceduralEffect> Effects = new List<ProceduralEffect>();
@@ -316,12 +324,19 @@ namespace ProceduralShapes.Runtime
             m_MeshRenderer.SetPropertyBlock(mpb);
         }
 
+        private Vector3 m_LastLossyScale;
         private void LateUpdate()
         {
             if (this == null || !isActiveAndEnabled) return;
             bool dirty = false;
             bool selfChanged = transform.hasChanged;
             
+            if (selfChanged && transform.lossyScale != m_LastLossyScale)
+            {
+                m_LastLossyScale = transform.lossyScale;
+                dirty = true;
+            }
+
             foreach (var op in BooleanOperations)
             {
                 if (op.SourceShape != null && (selfChanged || op.SourceShape.transform.hasChanged))
