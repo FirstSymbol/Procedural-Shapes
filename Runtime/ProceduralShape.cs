@@ -369,21 +369,32 @@ namespace ProceduralShapes.Runtime
             
             bool dirty = false;
 
+            // Оптимизация: проверяем изменения только если флаг hasChanged установлен
+            bool selfChanged = transform.hasChanged;
+            
             foreach (var op in BooleanOperations)
             {
-                if (op.SourceShape != null && CheckRelativeTransformDirty(op.SourceShape)) 
-                    dirty = true;
+                if (op.SourceShape != null && (selfChanged || op.SourceShape.transform.hasChanged))
+                {
+                    if (CheckRelativeTransformDirty(op.SourceShape)) 
+                        dirty = true;
+                }
             }
 
             if (m_CachedMask != null && m_CachedMask.isActiveAndEnabled && m_CachedMask.Shape != null)
             {
-                if (CheckRelativeTransformDirty(m_CachedMask.Shape)) dirty = true;
+                if (selfChanged || m_CachedMask.Shape.transform.hasChanged)
+                {
+                    if (CheckRelativeTransformDirty(m_CachedMask.Shape)) dirty = true;
+                }
             }
 
             if (dirty)
             {
                 SetAllDirty();
             }
+            
+            transform.hasChanged = false;
         }
 
         private void CheckForChanges()

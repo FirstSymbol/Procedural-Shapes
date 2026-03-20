@@ -50,6 +50,7 @@ Shader "UI/ProceduralShapes/Shape"
             #pragma multi_compile_local SHAPE_RECTANGLE SHAPE_ELLIPSE SHAPE_POLYGON SHAPE_STAR SHAPE_CAPSULE SHAPE_LINE SHAPE_RING SHAPE_PATH SHAPE_TRIANGLE SHAPE_HEART _
             #pragma multi_compile_local _ HAS_BOOLEANS
             #pragma multi_compile_local _ HAS_MASK
+            #pragma multi_compile_local _ HAS_NOISE
 
             #include "UnityCG.cginc"
             #include "UnityUI.cginc"
@@ -275,13 +276,15 @@ Shader "UI/ProceduralShapes/Shape"
                 float internalPadding = i.effectData.z;
                 float spread = i.effectData.w;
                 
+                float2 noiseOffset = 0;
+#if defined(HAS_NOISE)
                 float noiseAmount = frac(i.fillParams.z) * 100.0;
                 float noiseScale = i.fillParams.w;
-                float2 noiseOffset = 0;
                 if (noiseAmount > 0.001) {
                     float n = noise(p_orig * noiseScale * 0.1);
                     noiseOffset = (n * 2.0 - 1.0) * noiseAmount;
                 }
+#endif
                 
                 float2 halfSize = i.baseData.xy * 0.5;
 
@@ -381,17 +384,19 @@ Shader "UI/ProceduralShapes/Shape"
                     float2 patternUV = (p_orig / halfSize * 0.5 + 0.5) * gradScale + gradOffset;
                     colorSample = tex2D(_PatternTex, patternUV);
                 } else {
-                    float2 gradP = p_orig - (halfSize * gradOffset);
-                    gradP /= max(gradScale, 0.001);
                     float t = 0.5;
-                    if (fillType > 0.5 && fillType < 1.5) { // Linear
-                        float rad = gradAngle * 0.0174533;
-                        float2 dir = float2(cos(rad), sin(rad));
-                        t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
-                    } else if (fillType > 1.5 && fillType < 2.5) { // Radial
-                        t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
-                    } else if (fillType > 2.5 && fillType < 3.5) { // Angular
-                        t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
+                    if (fillType > 0.5) {
+                        float2 gradP = p_orig - (halfSize * gradOffset);
+                        gradP /= max(gradScale, 0.001);
+                        if (fillType < 1.5) { // Linear
+                            float rad = gradAngle * 0.0174533;
+                            float2 dir = float2(cos(rad), sin(rad));
+                            t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
+                        } else if (fillType < 2.5) { // Radial
+                            t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
+                        } else if (fillType < 3.5) { // Angular
+                            t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
+                        }
                     }
                     float vCoord = (rowIndex * 3.0 + 1.5) / 512.0;
                     colorSample = tex2D(_MainTex, float2(saturate(t), vCoord));
@@ -415,6 +420,7 @@ Shader "UI/ProceduralShapes/Shape"
                 finalColor.a *= mask; 
                 finalColor.rgb *= finalColor.a;
 
+#if defined(HAS_MASK)
                 if (_MaskParams.x > 0.5) {
                     float4x4 localToMaskSDF = float4x4(_MaskMatrixX, _MaskMatrixY, _MaskMatrixZ, _MaskMatrixW);
                     float2 maskP = mul(localToMaskSDF, float4(p_orig, 0.0, 1.0)).xy;
@@ -460,14 +466,16 @@ Shader "UI/ProceduralShapes/Shape"
                     mGradP /= max(mGradScale, 0.001);
 
                     float mt = 0.5;
-                    if (mFillType > 0.5 && mFillType < 1.5) {
-                        float rad = mGradAngle * 0.0174533;
-                        float2 dir = float2(cos(rad), sin(rad));
-                        mt = (dot(mGradP, dir) / max(abs(dir.x*mHalfSize.x)+abs(dir.y*mHalfSize.y), 0.001)) * 0.5 + 0.5;
-                    } else if (mFillType > 1.5 && mFillType < 2.5) {
-                        mt = length(mGradP) / max(max(mHalfSize.x, mHalfSize.y), 0.001);
-                    } else if (mFillType > 2.5 && mFillType < 3.5) {
-                        mt = frac((atan2(mGradP.y, mGradP.x) - mGradAngle * 0.0174533) / 6.28318 + 0.5);
+                    if (mFillType > 0.5) {
+                        if (mFillType < 1.5) {
+                            float rad = mGradAngle * 0.0174533;
+                            float2 dir = float2(cos(rad), sin(rad));
+                            mt = (dot(mGradP, dir) / max(abs(dir.x*mHalfSize.x)+abs(dir.y*mHalfSize.y), 0.001)) * 0.5 + 0.5;
+                        } else if (mFillType < 2.5) {
+                            mt = length(mGradP) / max(max(mHalfSize.x, mHalfSize.y), 0.001);
+                        } else if (mFillType < 3.5) {
+                            mt = frac((atan2(mGradP.y, mGradP.x) - mGradAngle * 0.0174533) / 6.28318 + 0.5);
+                        }
                     }
                     
                     float mVCoord = (mRowIndex * 3.0 + 1.5) / 512.0;
@@ -483,6 +491,7 @@ Shader "UI/ProceduralShapes/Shape"
                     finalColor.a = min(oldAlpha, mTotalAlpha);
                     finalColor.rgb *= (finalColor.a / max(oldAlpha, 0.0001));
                 }
+#endif
 
                 if (finalColor.a <= 0.001) discard;
 

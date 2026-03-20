@@ -239,6 +239,10 @@ namespace ProceduralShapes.Runtime
             state.MaskBoolCount = activeCount;
             if (activeCount > 0)
             {
+                if (state.MaskBoolOpType == null) {
+                    state.MaskBoolOpType = new Vector4[8]; state.MaskBoolShapeParams = new Vector4[8];
+                    state.MaskBoolTransform = new Vector4[8]; state.MaskBoolSize = new Vector4[8];
+                }
                 System.Array.Copy(m_ShaderOps, state.MaskBoolOpType, activeCount);
                 System.Array.Copy(m_ShaderShapeParams, state.MaskBoolShapeParams, activeCount);
                 System.Array.Copy(m_ShaderTransform, state.MaskBoolTransform, activeCount);

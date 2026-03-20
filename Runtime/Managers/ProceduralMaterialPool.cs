@@ -15,18 +15,19 @@ namespace ProceduralShapes.Runtime
         public Texture MainTex;
         public Texture PatternTex;
         public float InternalPadding;
+        public bool HasNoise;
 
         public int PathPointCount;
-        public Vector4[] PathData = new Vector4[64];
+        public Vector4[] PathData;
 
         public int BoolPathPointCount;
-        public Vector4[] BoolPathData = new Vector4[64];
+        public Vector4[] BoolPathData;
 
         public int BoolCount;
-        public Vector4[] BoolOpType = new Vector4[8];
-        public Vector4[] BoolShapeParams = new Vector4[8];
-        public Vector4[] BoolTransform = new Vector4[8];
-        public Vector4[] BoolSize = new Vector4[8];
+        public Vector4[] BoolOpType;
+        public Vector4[] BoolShapeParams;
+        public Vector4[] BoolTransform;
+        public Vector4[] BoolSize;
 
         public bool HasMask;
         public Matrix4x4 MaskMatrix;
@@ -38,17 +39,34 @@ namespace ProceduralShapes.Runtime
         public Vector4 MaskFillOffset;
 
         public int MaskBoolCount;
-        public Vector4[] MaskBoolOpType = new Vector4[8];
-        public Vector4[] MaskBoolShapeParams = new Vector4[8];
-        public Vector4[] MaskBoolTransform = new Vector4[8];
-        public Vector4[] MaskBoolSize = new Vector4[8];
+        public Vector4[] MaskBoolOpType;
+        public Vector4[] MaskBoolShapeParams;
+        public Vector4[] MaskBoolTransform;
+        public Vector4[] MaskBoolSize;
 
         public void Clear()
         {
             ShapeType = ShapeType.Rectangle;
             BaseMatId = 0; MainTex = null; PatternTex = null; InternalPadding = 0;
             PathPointCount = 0; BoolPathPointCount = 0; BoolCount = 0;
-            HasMask = false; MaskBoolCount = 0;
+            HasMask = false; MaskBoolCount = 0; HasNoise = false;
+        }
+
+        private void EnsureArrays() {
+            if (PathData == null) PathData = new Vector4[64];
+            if (BoolPathData == null) BoolPathData = new Vector4[64];
+            if (BoolOpType == null) {
+                BoolOpType = new Vector4[8];
+                BoolShapeParams = new Vector4[8];
+                BoolTransform = new Vector4[8];
+                BoolSize = new Vector4[8];
+            }
+            if (MaskBoolOpType == null) {
+                MaskBoolOpType = new Vector4[8];
+                MaskBoolShapeParams = new Vector4[8];
+                MaskBoolTransform = new Vector4[8];
+                MaskBoolSize = new Vector4[8];
+            }
         }
 
         public ShaderState Clone()
@@ -59,20 +77,31 @@ namespace ProceduralShapes.Runtime
             clone.MainTex = MainTex;
             clone.PatternTex = PatternTex;
             clone.InternalPadding = InternalPadding;
+            clone.HasNoise = HasNoise;
 
             clone.PathPointCount = PathPointCount;
-            if (PathPointCount > 0) Array.Copy(PathData, clone.PathData, PathPointCount > 64 ? 64 : PathPointCount);
+            if (PathPointCount > 0) {
+                clone.PathData = new Vector4[64];
+                Array.Copy(PathData, clone.PathData, 64);
+            }
 
             clone.BoolPathPointCount = BoolPathPointCount;
-            if (BoolPathPointCount > 0) Array.Copy(BoolPathData, clone.BoolPathData, BoolPathPointCount > 64 ? 64 : BoolPathPointCount);
+            if (BoolPathPointCount > 0) {
+                clone.BoolPathData = new Vector4[64];
+                Array.Copy(BoolPathData, clone.BoolPathData, 64);
+            }
 
             clone.BoolCount = BoolCount;
             if (BoolCount > 0)
             {
-                Array.Copy(BoolOpType, clone.BoolOpType, BoolCount);
-                Array.Copy(BoolShapeParams, clone.BoolShapeParams, BoolCount);
-                Array.Copy(BoolTransform, clone.BoolTransform, BoolCount);
-                Array.Copy(BoolSize, clone.BoolSize, BoolCount);
+                clone.BoolOpType = new Vector4[8];
+                clone.BoolShapeParams = new Vector4[8];
+                clone.BoolTransform = new Vector4[8];
+                clone.BoolSize = new Vector4[8];
+                Array.Copy(BoolOpType, clone.BoolOpType, 8);
+                Array.Copy(BoolShapeParams, clone.BoolShapeParams, 8);
+                Array.Copy(BoolTransform, clone.BoolTransform, 8);
+                Array.Copy(BoolSize, clone.BoolSize, 8);
             }
 
             clone.HasMask = HasMask;
@@ -89,10 +118,14 @@ namespace ProceduralShapes.Runtime
                 clone.MaskBoolCount = MaskBoolCount;
                 if (MaskBoolCount > 0)
                 {
-                    Array.Copy(MaskBoolOpType, clone.MaskBoolOpType, MaskBoolCount);
-                    Array.Copy(MaskBoolShapeParams, clone.MaskBoolShapeParams, MaskBoolCount);
-                    Array.Copy(MaskBoolTransform, clone.MaskBoolTransform, MaskBoolCount);
-                    Array.Copy(MaskBoolSize, clone.MaskBoolSize, MaskBoolCount);
+                    clone.MaskBoolOpType = new Vector4[8];
+                    clone.MaskBoolShapeParams = new Vector4[8];
+                    clone.MaskBoolTransform = new Vector4[8];
+                    clone.MaskBoolSize = new Vector4[8];
+                    Array.Copy(MaskBoolOpType, clone.MaskBoolOpType, 8);
+                    Array.Copy(MaskBoolShapeParams, clone.MaskBoolShapeParams, 8);
+                    Array.Copy(MaskBoolTransform, clone.MaskBoolTransform, 8);
+                    Array.Copy(MaskBoolSize, clone.MaskBoolSize, 8);
                 }
             }
             return clone;
@@ -102,19 +135,25 @@ namespace ProceduralShapes.Runtime
         {
             if (other == null) return false;
             if (ShapeType != other.ShapeType || BaseMatId != other.BaseMatId || MainTex != other.MainTex || PatternTex != other.PatternTex || 
-                Mathf.Abs(InternalPadding - other.InternalPadding) > 0.001f || HasMask != other.HasMask) return false;
+                Mathf.Abs(InternalPadding - other.InternalPadding) > 0.001f || HasMask != other.HasMask || HasNoise != other.HasNoise) return false;
 
             if (PathPointCount != other.PathPointCount) return false;
-            for (int i = 0; i < (PathPointCount > 64 ? 64 : PathPointCount); i++) if (PathData[i] != other.PathData[i]) return false;
+            if (PathPointCount > 0) {
+                for (int i = 0; i < (PathPointCount + 1) / 2; i++) if (PathData[i] != other.PathData[i]) return false;
+            }
 
             if (BoolPathPointCount != other.BoolPathPointCount) return false;
-            for (int i = 0; i < (BoolPathPointCount > 64 ? 64 : BoolPathPointCount); i++) if (BoolPathData[i] != other.BoolPathData[i]) return false;
+            if (BoolPathPointCount > 0) {
+                for (int i = 0; i < (BoolPathPointCount + 1) / 2; i++) if (BoolPathData[i] != other.BoolPathData[i]) return false;
+            }
 
             if (BoolCount != other.BoolCount) return false;
-            for (int i = 0; i < BoolCount; i++)
-            {
-                if (BoolOpType[i] != other.BoolOpType[i] || BoolShapeParams[i] != other.BoolShapeParams[i] ||
-                    BoolTransform[i] != other.BoolTransform[i] || BoolSize[i] != other.BoolSize[i]) return false;
+            if (BoolCount > 0) {
+                for (int i = 0; i < BoolCount; i++)
+                {
+                    if (BoolOpType[i] != other.BoolOpType[i] || BoolShapeParams[i] != other.BoolShapeParams[i] ||
+                        BoolTransform[i] != other.BoolTransform[i] || BoolSize[i] != other.BoolSize[i]) return false;
+                }
             }
 
             if (HasMask)
@@ -124,10 +163,12 @@ namespace ProceduralShapes.Runtime
                     MaskFillOffset != other.MaskFillOffset) return false;
 
                 if (MaskBoolCount != other.MaskBoolCount) return false;
-                for (int i = 0; i < MaskBoolCount; i++)
-                {
-                    if (MaskBoolOpType[i] != other.MaskBoolOpType[i] || MaskBoolShapeParams[i] != other.MaskBoolShapeParams[i] ||
-                        MaskBoolTransform[i] != other.MaskBoolTransform[i] || MaskBoolSize[i] != other.MaskBoolSize[i]) return false;
+                if (MaskBoolCount > 0) {
+                    for (int i = 0; i < MaskBoolCount; i++)
+                    {
+                        if (MaskBoolOpType[i] != other.MaskBoolOpType[i] || MaskBoolShapeParams[i] != other.MaskBoolShapeParams[i] ||
+                            MaskBoolTransform[i] != other.MaskBoolTransform[i] || MaskBoolSize[i] != other.MaskBoolSize[i]) return false;
+                    }
                 }
             }
 
@@ -145,7 +186,8 @@ namespace ProceduralShapes.Runtime
                 hash = hash * 23 + BoolCount;
                 hash = hash * 23 + PathPointCount;
                 hash = hash * 23 + (HasMask ? 1 : 0);
-                if (BoolCount > 0) hash = hash * 23 + BoolTransform[0].GetHashCode();
+                hash = hash * 23 + (HasNoise ? 1 : 0);
+                if (BoolCount > 0 && BoolTransform != null) hash = hash * 23 + BoolTransform[0].GetHashCode();
                 if (HasMask) hash = hash * 23 + MaskMatrix.GetHashCode();
             }
             return hash;
@@ -180,6 +222,7 @@ namespace ProceduralShapes.Runtime
 
             if (BoolCount > 0) mat.EnableKeyword("HAS_BOOLEANS"); else mat.DisableKeyword("HAS_BOOLEANS");
             if (HasMask) mat.EnableKeyword("HAS_MASK"); else mat.DisableKeyword("HAS_MASK");
+            if (HasNoise) mat.EnableKeyword("HAS_NOISE"); else mat.DisableKeyword("HAS_NOISE");
 
             if (MainTex) mat.SetTexture("_MainTex", MainTex);
             if (PatternTex) mat.SetTexture("_PatternTex", PatternTex);

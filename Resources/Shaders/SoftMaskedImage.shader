@@ -36,7 +36,7 @@ Shader "UI/ProceduralShapes/SoftMaskedImage"
         Tags { "Queue"="Transparent" "IgnoreProjector"="True" "RenderType"="Transparent" "CanUseSpriteAtlas"="True" }
         Stencil { Ref [_Stencil] Comp [_StencilComp] Pass [_StencilOp] ReadMask [_StencilReadMask] WriteMask [_StencilWriteMask] }
         Cull Off Lighting Off ZWrite Off ZTest [unity_GUIZTestMode]
-        Blend SrcAlpha OneMinusSrcAlpha
+        Blend SrcAlpha OneMinusSrcAlpha 
         ColorMask [_ColorMask]
 
         Pass
@@ -51,6 +51,7 @@ Shader "UI/ProceduralShapes/SoftMaskedImage"
             #include "SDFUtils.cginc"
 
             #pragma multi_compile_local _ UNITY_UI_CLIP_RECT
+            #pragma multi_compile_local _ HAS_MASK
 
             struct appdata_ui {
                 float4 vertex : POSITION;
@@ -105,6 +106,7 @@ Shader "UI/ProceduralShapes/SoftMaskedImage"
             fixed4 frag (v2f i) : SV_Target {
                 float4 color = tex2D(_MainTex, i.texcoord) * i.color;
                 
+#if defined(HAS_MASK)
                 if (_MaskParams.x > 0.5) {
                     float4x4 localToMaskSDF = float4x4(
                         _MaskWorldToLocalX,
@@ -158,30 +160,32 @@ Shader "UI/ProceduralShapes/SoftMaskedImage"
                     float2 gradOffset = _MaskFillOffset.xy; 
                     float mBaseAlpha = _MaskFillOffset.z;
 
-                    float2 gradP = maskP - (halfSize * gradOffset);
-                    gradP /= max(gradScale, 0.001);
-
-                    float t = 0.5;
-                    if (fillType > 0.5 && fillType < 1.5) { // Linear
-                        float rad = gradAngle * 0.0174533;
-                        float2 dir = float2(cos(rad), sin(rad));
-                        t = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
-                    } else if (fillType > 1.5 && fillType < 2.5) { // Radial
-                        t = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
-                    } else if (fillType > 2.5 && fillType < 3.5) { // Angular
-                        t = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
+                    float mt = 0.5;
+                    if (fillType > 0.5) {
+                        float2 gradP = maskP - (halfSize * gradOffset);
+                        gradP /= max(gradScale, 0.001);
+                        if (fillType < 1.5) { // Linear
+                            float rad = gradAngle * 0.0174533;
+                            float2 dir = float2(cos(rad), sin(rad));
+                            mt = (dot(gradP, dir) / max(abs(dir.x*halfSize.x)+abs(dir.y*halfSize.y), 0.001)) * 0.5 + 0.5;
+                        } else if (fillType < 2.5) { // Radial
+                            mt = length(gradP) / max(max(halfSize.x, halfSize.y), 0.001);
+                        } else if (fillType < 3.5) { // Angular
+                            mt = frac((atan2(gradP.y, gradP.x) - gradAngle * 0.0174533) / 6.28318 + 0.5);
+                        }
                     }
                     
                     float mVCoord = (mRowIndex * 3.0 + 1.5) / 512.0;
                     float fillAlpha = 1.0;
                     if (fillType > 0.5) { 
-                         fillAlpha = tex2D(_MaskTex, float2(saturate(t), mVCoord)).a;
+                         fillAlpha = tex2D(_MaskTex, float2(saturate(mt), mVCoord)).a;
                     } else {
                          fillAlpha = tex2D(_MaskTex, float2(0.5, mVCoord)).a; 
                     }
 
                     color.a = min(color.a, shapeAlpha * fillAlpha * mBaseAlpha);
                 }
+#endif
 
                 #ifdef UNITY_UI_CLIP_RECT
                 color.a *= UnityGet2DClipping(i.worldPos.xy, _ClipRect);
