@@ -345,6 +345,7 @@ namespace ProceduralShapes.Runtime
                     shape.SetAllDirty();
                 }
             }
+            ProceduralSprite.ForceUpdateAllSprites();
         }
 #endif
         

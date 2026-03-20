@@ -47,6 +47,19 @@ namespace ProceduralShapes.Editor
             FinalizeCreation(go);
         }
 
+        [MenuItem("GameObject/2D Object/Procedural Sprite", false, 10)]
+        public static void CreateProceduralSprite(MenuCommand menuCommand)
+        {
+            GameObject parent = menuCommand.context as GameObject;
+            GameObject go = new GameObject("Procedural Sprite", typeof(MeshFilter), typeof(MeshRenderer));
+            go.AddComponent<ProceduralSprite>();
+            
+            GameObjectUtility.SetParentAndAlign(go, parent);
+            
+            Undo.RegisterCreatedObjectUndo(go, "Create " + go.name);
+            Selection.activeObject = go;
+        }
+
         /// <summary>
         /// Создает базовый UI объект с RectTransform и CanvasRenderer.
         /// </summary>
