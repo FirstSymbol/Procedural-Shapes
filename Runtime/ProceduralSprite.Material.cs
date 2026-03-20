@@ -47,16 +47,26 @@ namespace ProceduralShapes.Runtime
             state.HasNoise = m_EdgeNoiseAmount > 0.001f;
             state.HasMask = false;
 
+            Vector2 stretch = GetStretchScale();
+            Vector2 rootLs = transform.lossyScale;
+            rootLs.x = Mathf.Max(Mathf.Abs(rootLs.x), 0.001f);
+            rootLs.y = Mathf.Max(Mathf.Abs(rootLs.y), 0.001f);
+            Vector2 rootUvScale = new Vector2(rootLs.x * stretch.x, rootLs.y * stretch.y);
+
             if (m_ShapeType == ShapeType.Path && m_FlattenedPath != null)
             {
                 if (state.PathData == null) state.PathData = new Vector4[64];
-                ApplyPathDataToState(state.PathData, out state.PathPointCount, m_FlattenedPath);
+                ApplyPathDataToState(state.PathData, out state.PathPointCount, m_FlattenedPath, rootUvScale);
             }
 
             if (firstPathOperator != null)
             {
                 if (state.BoolPathData == null) state.BoolPathData = new Vector4[64];
-                ApplyPathDataToState(state.BoolPathData, out state.BoolPathPointCount, firstPathOperator.m_FlattenedPath);
+                
+                Vector3 otherLs = firstPathOperator.transform.lossyScale;
+                Vector2 opScale = new Vector2(otherLs.x * firstPathOperator.ShapeScale.x * stretch.x, otherLs.y * firstPathOperator.ShapeScale.y * stretch.y);
+                
+                ApplyPathDataToState(state.BoolPathData, out state.BoolPathPointCount, firstPathOperator.m_FlattenedPath, opScale);
             }
 
             state.BoolCount = m_ActiveBoolCount;
@@ -96,22 +106,22 @@ namespace ProceduralShapes.Runtime
                     if (m_InstanceMaterialIsPooled) ProceduralMaterialPool.ReleaseMaterial(m_InstanceMaterial);
                     else if (Application.isPlaying) Destroy(m_InstanceMaterial); else DestroyImmediate(m_InstanceMaterial);
                 }
-                
+
                 m_InstanceMaterial = matToUse;
                 m_InstanceMaterialIsPooled = true;
                 return m_InstanceMaterial;
             }
         }
 
-        private void ApplyPathDataToState(Vector4[] targetArray, out int pointCount, List<Vector2> points)
+        private void ApplyPathDataToState(Vector4[] targetArray, out int pointCount, List<Vector2> points, Vector2 scale)
         {
             pointCount = Mathf.Min(points.Count, 128); 
             for (int i = 0; i < pointCount; i += 2)
             {
-                float x1 = points[i].x;
-                float y1 = points[i].y;
-                float x2 = (i + 1 < pointCount) ? points[i + 1].x : 0;
-                float y2 = (i + 1 < pointCount) ? points[i + 1].y : 0;
+                float x1 = points[i].x * scale.x;
+                float y1 = points[i].y * scale.y;
+                float x2 = (i + 1 < pointCount) ? points[i + 1].x * scale.x : 0;
+                float y2 = (i + 1 < pointCount) ? points[i + 1].y * scale.y : 0;
                 targetArray[i / 2] = new Vector4(x1, y1, x2, y2);
             }
         }

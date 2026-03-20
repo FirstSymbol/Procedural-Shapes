@@ -134,8 +134,20 @@ namespace ProceduralShapes.Runtime
             Vector2 pivotOffset = GetGeometricCenterOffset();
             float cx = baseRect.center.x + pivotOffset.x;
             float cy = baseRect.center.y + pivotOffset.y;
-            float hw = baseRect.width * 0.5f * m_ShapeScale2D.x + expansion;
-            float hh = baseRect.height * 0.5f * m_ShapeScale2D.y + expansion;
+            
+            float hwBase = baseRect.width * 0.5f * m_ShapeScale2D.x;
+            float hhBase = baseRect.height * 0.5f * m_ShapeScale2D.y;
+
+            if (!m_StretchToFill && (m_ShapeType == ShapeType.Polygon || m_ShapeType == ShapeType.Star || m_ShapeType == ShapeType.Ring || m_ShapeType == ShapeType.Triangle || m_ShapeType == ShapeType.Heart))
+            {
+                float minBase = Mathf.Min(hwBase, hhBase);
+                hwBase = minBase;
+                hhBase = minBase;
+            }
+
+            float radialExpansion = expansion;
+            if (m_ShapeType == ShapeType.Star) radialExpansion = expansion * 3.5f;
+            else if (m_ShapeType == ShapeType.Polygon || m_ShapeType == ShapeType.Triangle || m_ShapeType == ShapeType.Heart) radialExpansion = expansion * 2f;
 
             int startVert = vh.currentVertCount;
             UIVertex vert = UIVertex.simpleVert;
@@ -169,7 +181,7 @@ namespace ProceduralShapes.Runtime
                 float r = 1f;
                 if (m_ShapeType == ShapeType.Star && (i % 2 != 0)) r = m_StarRatio;
 
-                Vector2 pos = new Vector2(cx + s * hw * r, cy + c * hh * r);
+                Vector2 pos = new Vector2(cx + s * hwBase * r + s * radialExpansion, cy + c * hhBase * r + c * radialExpansion);
                 vert.position = pos;
                 vert.uv0 = new Vector4((pos.x - cx) * stretch.x, (pos.y - cy) * stretch.y, dashData.x, dashData.y);
                 vh.AddVert(vert);
@@ -352,9 +364,7 @@ namespace ProceduralShapes.Runtime
             float customSmoothing = m_CornerSmoothing;
             if (m_ShapeType == ShapeType.Line) customSmoothing = m_LineWidth;
 
-            float scaledW = baseRect.width * m_ShapeScale2D.x;
-            float scaledH = baseRect.height * m_ShapeScale2D.y;
-            Vector4 uv2_baseData = new Vector4(scaledW, scaledH, customSmoothing, effectType);
+            Vector4 uv2_baseData = GetPackedBaseData(baseRect, effectType, customSmoothing);
             
             Vector4 uv3_fillParams = GetPackedFillParams(textureRowIndex, fill);
 

@@ -113,8 +113,29 @@ namespace ProceduralShapes.Runtime
             Vector2 pivotOffset = GetGeometricCenterOffset();
             float cx = baseRect.center.x + pivotOffset.x;
             float cy = baseRect.center.y + pivotOffset.y;
-            float hw = baseRect.width * 0.5f * m_ShapeScale2D.x + expansion;
-            float hh = baseRect.height * 0.5f * m_ShapeScale2D.y + expansion;
+            
+            Vector2 ls = transform.lossyScale;
+            ls.x = Mathf.Max(Mathf.Abs(ls.x), 0.001f);
+            ls.y = Mathf.Max(Mathf.Abs(ls.y), 0.001f);
+            Vector2 uvScale = new Vector2(ls.x * GetStretchScale().x, ls.y * GetStretchScale().y);
+
+            float hwBase = baseRect.width * 0.5f * m_ShapeScale2D.x;
+            float hhBase = baseRect.height * 0.5f * m_ShapeScale2D.y;
+
+            if (!m_StretchToFill && (m_ShapeType == ShapeType.Polygon || m_ShapeType == ShapeType.Star || m_ShapeType == ShapeType.Ring || m_ShapeType == ShapeType.Triangle || m_ShapeType == ShapeType.Heart))
+            {
+                float maxR = Mathf.Min(hwBase * ls.x, hhBase * ls.y);
+                hwBase = maxR / ls.x;
+                hhBase = maxR / ls.y;
+            }
+
+            float radialExpansion = expansion;
+            if (m_ShapeType == ShapeType.Star) radialExpansion = expansion * 3.5f;
+            else if (m_ShapeType == ShapeType.Polygon || m_ShapeType == ShapeType.Triangle || m_ShapeType == ShapeType.Heart) radialExpansion = expansion * 2f;
+
+            // In local space, radial expansion must also be inverse-scaled so it is uniform in world space!
+            float expandX = radialExpansion / ls.x;
+            float expandY = radialExpansion / ls.y;
 
             int startVert = vh.currentVertCount;
             UIVertex vert = UIVertex.simpleVert;
@@ -132,11 +153,6 @@ namespace ProceduralShapes.Runtime
             vert.uv2 = GetPackedBaseData(baseRect, effectType, m_CornerSmoothing);
             vert.uv3 = GetPackedFillParams(textureRowIndex, fill);
 
-            Vector2 ls = transform.lossyScale;
-            ls.x = Mathf.Max(Mathf.Abs(ls.x), 0.001f);
-            ls.y = Mathf.Max(Mathf.Abs(ls.y), 0.001f);
-            Vector2 uvScale = new Vector2(ls.x * GetStretchScale().x, ls.y * GetStretchScale().y);
-
             vert.position = new Vector3(cx, cy);
             vert.uv0 = new Vector4(0, 0, dashData.x, dashData.y);
             vh.AddVert(vert);
@@ -152,7 +168,7 @@ namespace ProceduralShapes.Runtime
                 float r = 1f;
                 if (m_ShapeType == ShapeType.Star && (i % 2 != 0)) r = m_StarRatio;
 
-                Vector2 pos = new Vector2(cx + s * hw * r, cy + c * hh * r);
+                Vector2 pos = new Vector2(cx + s * hwBase * r + s * expandX, cy + c * hhBase * r + c * expandY);
                 vert.position = pos;
                 vert.uv0 = new Vector4((pos.x - cx) * uvScale.x, (pos.y - cy) * uvScale.y, dashData.x, dashData.y);
                 vh.AddVert(vert);
@@ -334,9 +350,7 @@ namespace ProceduralShapes.Runtime
             float customSmoothing = m_CornerSmoothing;
             if (m_ShapeType == ShapeType.Line) customSmoothing = m_LineWidth;
 
-            float scaledW = baseRect.width * m_ShapeScale2D.x;
-            float scaledH = baseRect.height * m_ShapeScale2D.y;
-            Vector4 uv2_baseData = new Vector4(scaledW, scaledH, customSmoothing, effectType);
+            Vector4 uv2_baseData = GetPackedBaseData(baseRect, effectType, customSmoothing);
             
             Vector4 uv3_fillParams = GetPackedFillParams(textureRowIndex, fill);
 
