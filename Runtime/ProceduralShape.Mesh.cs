@@ -79,31 +79,42 @@ namespace ProceduralShapes.Runtime
 
             // 1. Внешние тени (Drop Shadows)
             for (int i = 0; i < Effects.Count; i++)
-                if (Effects[i] is DropShadowEffect shadow && shadow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, m_EdgeSoftness, shadow.Fill.GradientOffset.x, shadow.Fill.GradientOffset.y));
+                if (Effects[i] is DropShadowEffect shadow && shadow.Enabled) {
+                    Vector2 offset = shadow.Fill.Type == FillType.Pattern ? shadow.Fill.PatternOffset : shadow.Fill.GradientOffset;
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], shadow.Fill, new Vector3(shadow.Offset.x, shadow.Offset.y, shadow.Blur), new Vector4(shadow.Spread, m_EdgeSoftness, offset.x, offset.y));
+                }
 
             // 2. Внешнее свечение (Outer Glow)
             for (int i = 0; i < Effects.Count; i++)
-                if (Effects[i] is OuterGlowEffect glow && glow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, m_EdgeSoftness, glow.Fill.GradientOffset.x, glow.Fill.GradientOffset.y));
+                if (Effects[i] is OuterGlowEffect glow && glow.Enabled) {
+                    Vector2 offset = glow.Fill.Type == FillType.Pattern ? glow.Fill.PatternOffset : glow.Fill.GradientOffset;
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 1, m_EffectAtlasIndices[i], glow.Fill, new Vector3(0, 0, glow.Blur), new Vector4(glow.Spread, m_EdgeSoftness, offset.x, offset.y));
+                }
 
             // 3. Основная фигура (Main Fill)
-            DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, m_MainFillAtlasIndex, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, MainFill.GradientOffset.x, MainFill.GradientOffset.y), maxExpand);
+            Vector2 mainOffset = MainFill.Type == FillType.Pattern ? MainFill.PatternOffset : MainFill.GradientOffset;
+            DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 0, m_MainFillAtlasIndex, MainFill, new Vector3(m_InternalPadding, m_EdgeSoftness, mainBlurRadius), new Vector4(0, 0, mainOffset.x, mainOffset.y), maxExpand);
 
             // 4. Внутренние тени (Inner Shadows)
             for (int i = 0; i < Effects.Count; i++)
-                if (Effects[i] is InnerShadowEffect inner && inner.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, m_EdgeSoftness, inner.Fill.GradientOffset.x, inner.Fill.GradientOffset.y));
+                if (Effects[i] is InnerShadowEffect inner && inner.Enabled) {
+                    Vector2 offset = inner.Fill.Type == FillType.Pattern ? inner.Fill.PatternOffset : inner.Fill.GradientOffset;
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], inner.Fill, new Vector3(inner.Offset.x, inner.Offset.y, inner.Blur), new Vector4(inner.Spread, m_EdgeSoftness, offset.x, offset.y));
+                }
 
             // 5. Внутреннее свечение (Inner Glow)
             for (int i = 0; i < Effects.Count; i++)
-                if (Effects[i] is InnerGlowEffect iglow && iglow.Enabled)
-                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, m_EdgeSoftness, iglow.Fill.GradientOffset.x, iglow.Fill.GradientOffset.y));
+                if (Effects[i] is InnerGlowEffect iglow && iglow.Enabled) {
+                    Vector2 offset = iglow.Fill.Type == FillType.Pattern ? iglow.Fill.PatternOffset : iglow.Fill.GradientOffset;
+                    DrawLayerQuad(vh, minX, maxX, minY, maxY, rect, 3, m_EffectAtlasIndices[i], iglow.Fill, new Vector3(0, 0, iglow.Blur), new Vector4(iglow.Spread, m_EdgeSoftness, offset.x, offset.y));
+                }
 
             // 6. Обводка (Stroke)
             for (int i = 0; i < Effects.Count; i++)
-                if (Effects[i] is StrokeEffect stroke && stroke.Enabled)
-                    DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 2, m_EffectAtlasIndices[i], stroke.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(stroke.Width, (float)stroke.Alignment, stroke.Fill.GradientOffset.x, stroke.Fill.GradientOffset.y), maxExpand, new Vector2(stroke.DashSize, stroke.DashSpace));
+                if (Effects[i] is StrokeEffect stroke && stroke.Enabled) {
+                    Vector2 offset = stroke.Fill.Type == FillType.Pattern ? stroke.Fill.PatternOffset : stroke.Fill.GradientOffset;
+                    DrawLayerMesh(vh, minX, maxX, minY, maxY, rect, 2, m_EffectAtlasIndices[i], stroke.Fill, new Vector3(m_InternalPadding, m_EdgeSoftness, 0), new Vector4(stroke.Width, (float)stroke.Alignment, offset.x, offset.y), maxExpand, new Vector2(stroke.DashSize, stroke.DashSpace));
+                }
             
             // 7. Фаска/Объем (Bevel)
             for (int i = 0; i < Effects.Count; i++)
@@ -154,12 +165,7 @@ namespace ProceduralShapes.Runtime
             vert.color = fill.Type == FillType.Solid ? fill.SolidColor : Color.white;
             vert.normal = normalData;
             
-            Vector4 finalTangent = tangentData;
-            if (fill.Type == FillType.Pattern)
-            {
-                finalTangent = new Vector4(fill.PatternTiling.x, fill.PatternTiling.y, fill.PatternOffset.x, fill.PatternOffset.y);
-            }
-            vert.tangent = finalTangent;
+            vert.tangent = tangentData;
             
             vert.uv1 = GetPackedShapeParams();
             vert.uv2 = GetPackedBaseData(baseRect, effectType, m_CornerSmoothing);
@@ -242,6 +248,7 @@ namespace ProceduralShapes.Runtime
             if (fill.Type == FillType.Pattern)
             {
                 packedNoiseAmount = 0f + (Mathf.Clamp(m_EdgeNoiseAmount, 0f, 50f) / 100f);
+                scaleOrNoise = fill.PatternTiling.x;
             }
             
             return new Vector4(packedRow, type, packedNoiseAmount, scaleOrNoise);
@@ -378,12 +385,7 @@ namespace ProceduralShapes.Runtime
             vert.color = fill.Type == FillType.Solid ? fill.SolidColor : Color.white; 
             vert.normal = normalData;
             
-            Vector4 finalTangent = tangentData;
-            if (fill.Type == FillType.Pattern)
-            {
-                finalTangent = new Vector4(fill.PatternTiling.x, fill.PatternTiling.y, fill.PatternOffset.x, fill.PatternOffset.y);
-            }
-            vert.tangent = finalTangent;
+            vert.tangent = tangentData;
             
             vert.uv1 = uv1_shapeParams;
             vert.uv2 = uv2_baseData;

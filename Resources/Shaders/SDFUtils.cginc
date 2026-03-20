@@ -31,7 +31,7 @@ float hard_op(float d1, float d2, float op) {
     return d1;
 }
 
-float GetPerimeterMapping(float2 p, float2 halfSize, float shapeType) {
+float GetAnyPerimeterMapping(float2 p, float2 halfSize, float shapeType, float4 params) {
     if (shapeType < 0.5) { // Rectangle
         float w = halfSize.x;
         float h = halfSize.y;
@@ -43,8 +43,56 @@ float GetPerimeterMapping(float2 p, float2 halfSize, float shapeType) {
             if (p.y > 0) return p.x + w;
             else return 2.0 * w + 2.0 * h + (w - p.x);
         }
+    } else if (shapeType < 1.5) { // Ellipse
+        return (atan2(p.y, p.x) + 3.14159265) * (halfSize.x + halfSize.y) * 0.5;
+    } else if (shapeType < 2.5 || (shapeType < 9.5 && shapeType > 8.5)) { // Polygon or Triangle
+        float n = (shapeType > 8.5) ? 3.0 : max(3.0, params.x);
+        float rounding = (shapeType > 8.5) ? 0.0 : params.y;
+        float2 p_adj = p;
+        if (shapeType > 8.5) {
+             float r = min(halfSize.x, halfSize.y);
+             p_adj.y += r * 0.25;
+        }
+        float an = 3.14159265 / n;
+        float a = atan2(p_adj.x, p_adj.y);
+        float bn = floor(a / (2.0 * an));
+        float f = a - (bn + 0.5) * 2.0 * an;
+        bn = bn - n * floor(bn / n);
+        float maxR = min(halfSize.x, halfSize.y);
+        float rOuter = maxR - rounding * maxR * 0.5;
+        float edgeLen = 2.0 * rOuter * sin(an);
+        float distOnEdge = rOuter * cos(an) * tan(f);
+        return (bn + 0.5) * edgeLen + distOnEdge + (n * 0.5 * edgeLen);
+    } else if (shapeType < 3.5) { // Star
+        float n = max(3.0, params.x);
+        float an = 3.14159265 / n;
+        float a = atan2(p.x, p.y);
+        float bn = floor(a / (2.0 * an));
+        float f = a - (bn + 0.5) * 2.0 * an;
+        bn = bn - n * floor(bn / n);
+        float maxR = min(halfSize.x, halfSize.y);
+        float ro = params.z * maxR * 0.5;
+        float rOut = max(maxR - ro, 0.001);
+        float rIn  = max(params.y * maxR - ro, 0.001);
+        float2 p1 = float2(0.0, rOut);
+        float2 p2 = float2(rIn * sin(an), rIn * cos(an));
+        float edgeLen = length(p2 - p1);
+        float2 q = length(p) * float2(abs(sin(f)), cos(f));
+        float2 ba = p2 - p1;
+        float h = clamp(dot(q - p1, ba) / dot(ba, ba), 0.0, 1.0);
+        float distInPoint = (f > 0) ? (edgeLen + h * edgeLen) : ((1.0 - h) * edgeLen);
+        return bn * 2.0 * edgeLen + distInPoint + (n * edgeLen);
+    } else if (shapeType < 6.5 && shapeType > 5.5) { // Ring
+        float maxR = min(halfSize.x, halfSize.y);
+        float innerR = params.x * maxR;
+        float midR = (maxR + innerR) * 0.5;
+        return (atan2(p.x, p.y) + 3.14159265) * midR;
     }
     return (atan2(p.y, p.x) + 3.14159265) * (halfSize.x + halfSize.y) * 0.5;
+}
+
+float GetPerimeterMapping(float2 p, float2 halfSize, float shapeType) {
+    return GetAnyPerimeterMapping(p, halfSize, shapeType, float4(0,0,0,0));
 }
 
 float hash(float2 p) {

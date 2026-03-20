@@ -1,11 +1,14 @@
 {
-    "name": "ProceduralShape",
-    "rootNamespace": "ProceduralShapes.Runtime",
+    "name": "ProceduralShape.Editor",
+    "rootNamespace": "ProceduralShapes.Editor",
     "references": [
+        "ProceduralShape",
         "Unity.UGUI",
-        "Unity.TextMeshPro"
+        "Unity.UGUI.Editor"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

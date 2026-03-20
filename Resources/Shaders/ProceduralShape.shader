@@ -116,8 +116,10 @@ Shader "UI/ProceduralShapes/Shape"
 
             v2f vert (appdata_ui v) {
                 v2f o;
-                o.worldPosition = v.vertex;
-                o.vertex = UnityObjectToClipPos(o.worldPosition);
+                float4 worldPos = float4(v.vertex.xyz, 1.0);
+                o.vertex = UnityObjectToClipPos(worldPos);
+                o.worldPosition = worldPos;
+                o.worldPosition.w = v.tangent.y;
                 o.color = v.color;
                 
                 o.shapeParams = v.texcoord1;
@@ -147,7 +149,7 @@ Shader "UI/ProceduralShapes/Shape"
                 o.effectData = float4(blur, aa, internalPadding, spread);
                 o.precalc1 = float4(0,0,0,0);
                 o.precalc2 = float4(v.texcoord0.z, v.texcoord0.w, 0, 0); 
-                o.extraData = float4(0,0, v.tangent.z, v.tangent.w); 
+                o.extraData = float4(0, v.tangent.y, v.tangent.z, v.tangent.w); 
 
                 float2 halfSize = v.texcoord2.xy * 0.5;
                 float4 params = v.texcoord1;
@@ -191,20 +193,23 @@ Shader "UI/ProceduralShapes/Shape"
                 return o;
             }
 
-            float GetMainPerimeterMapping(float2 p, float2 halfSize) {
+            float GetMainPerimeterMapping(float2 p, float2 halfSize, float4 params) {
 #if defined(SHAPE_RECTANGLE)
-                float w = halfSize.x;
-                float h = halfSize.y;
-                float2 absP = abs(p);
-                if (absP.x * h > absP.y * w) {
-                    if (p.x > 0) return 2.0 * w + (h - p.y);
-                    else return 4.0 * w + 2.0 * h + (p.y + h);
-                } else {
-                    if (p.y > 0) return p.x + w;
-                    else return 2.0 * w + 2.0 * h + (w - p.x);
-                }
+                return GetAnyPerimeterMapping(p, halfSize, 0, params);
+#elif defined(SHAPE_ELLIPSE)
+                return GetAnyPerimeterMapping(p, halfSize, 1, params);
+#elif defined(SHAPE_POLYGON)
+                return GetAnyPerimeterMapping(p, halfSize, 2, params);
+#elif defined(SHAPE_STAR)
+                return GetAnyPerimeterMapping(p, halfSize, 3, params);
+#elif defined(SHAPE_CAPSULE)
+                return GetAnyPerimeterMapping(p, halfSize, 4, params);
 #elif defined(SHAPE_LINE)
                 return p.x;
+#elif defined(SHAPE_RING)
+                return GetAnyPerimeterMapping(p, halfSize, 6, params);
+#elif defined(SHAPE_TRIANGLE)
+                return GetAnyPerimeterMapping(p, halfSize, 9, params);
 #else
                 return (atan2(p.y, p.x) + 3.14159265) * (halfSize.x + halfSize.y) * 0.5;
 #endif
@@ -293,8 +298,10 @@ Shader "UI/ProceduralShapes/Shape"
                 bool needShadowD = (effectType == 1.0 || effectType == 3.0);
                 bool needOrigD = (effectType != 1.0);
 
+                float perimeter = 0;
                 if (needOrigD) {
                     d_orig = GetMainSDF_Optimized(p_orig + noiseOffset, halfSize, customSmoothing, i.shapeParams, i);
+                    if (effectType == 2.0) perimeter = GetMainPerimeterMapping(p_orig + noiseOffset, halfSize, i.shapeParams);
                 }
                 
                 if (needShadowD) {
@@ -322,6 +329,18 @@ Shader "UI/ProceduralShapes/Shape"
                                 p2_orig = float2(p2_orig.x * boolTrans.w - p2_orig.y * boolTrans.z, p2_orig.x * boolTrans.z + p2_orig.y * boolTrans.w);
                             }
                             float d2_orig = GetBasicSDF(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolSmooth, boolShapeParams, isPathOp);
+
+                            if (effectType == 2.0) {
+                                bool closer = false;
+                                if (boolOp < 1.5) closer = d2_orig < d_orig; // Union
+                                else if (boolOp < 2.5) closer = -d2_orig > d_orig; // Subtract
+                                else if (boolOp < 3.5) closer = d2_orig > d_orig; // Intersect
+                                
+                                if (closer) {
+                                    perimeter = GetAnyPerimeterMapping(p2_orig + noiseOffset, boolSize * 0.5, boolType, boolShapeParams);
+                                }
+                            }
+
                             if (smoothBlend > 0.001) d_orig = smin_op(d_orig, d2_orig, boolOp, smoothBlend);
                             else d_orig = hard_op(d_orig, d2_orig, boolOp);
                         }
@@ -349,12 +368,11 @@ Shader "UI/ProceduralShapes/Shape"
                     mask = smoothstep(max(blur, aa), -max(blur, aa), d);
                 }
                 else if (effectType == 2.0) { // Stroke
-                    float alignment = i.extraData.w; // originally i.tangent.y
+                    float alignment = i.worldPosition.w; 
                     float strokeOffset = (alignment == 0) ? -spread * 0.5 : ((alignment == 2) ? spread * 0.5 : 0);
                     float strokeD = abs(d_orig - strokeOffset) - spread * 0.5;
                     float2 dashData = i.precalc2.xy;
                     if (dashData.x > 0.001) {
-                        float perimeter = GetMainPerimeterMapping(p_orig + noiseOffset, halfSize);
                         if (frac(perimeter / (dashData.x + dashData.y)) > (dashData.x / (dashData.x + dashData.y))) discard;
                     }
                     mask = smoothstep(aa, -aa, strokeD);
@@ -408,8 +426,8 @@ Shader "UI/ProceduralShapes/Shape"
                     float2 bDir = float2(cos(i.extraData.z), sin(i.extraData.z)); // extraData.z holds tangent.z
                     float diff = GetMainSDF_Optimized(p_orig + noiseOffset + bDir * dist, halfSize, customSmoothing, i.shapeParams, i) - 
                                  GetMainSDF_Optimized(p_orig + noiseOffset - bDir * dist, halfSize, customSmoothing, i.shapeParams, i);
-                    float highlight = saturate(diff / (dist * 2.0)) * spread; // spread holds tangent.x
-                    float shadow = saturate(-diff / (dist * 2.0)) * i.extraData.w; // extraData.w holds tangent.y
+                    float highlight = saturate(diff / (dist * 2.0)) * i.effectData.w;
+                    float shadow = saturate(-diff / (dist * 2.0)) * i.worldPosition.w;
                     float baseMask = smoothstep(aa, -aa, d_orig);
                     if (baseMask <= 0.001) discard;
                     finalColor = (shadow > highlight) ? float4(0,0,0, shadow) : float4(1,1,1, highlight);
